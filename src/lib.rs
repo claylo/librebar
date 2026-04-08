@@ -54,6 +54,18 @@ pub mod config;
 #[cfg(feature = "logging")]
 pub mod logging;
 
+#[cfg(feature = "otel")]
+pub mod otel;
+
+#[cfg(feature = "shutdown")]
+pub mod shutdown;
+
+#[cfg(feature = "crash")]
+pub mod crash;
+
+#[cfg(feature = "mcp")]
+pub mod mcp;
+
 pub use error::{Error, Result};
 
 // ─── App ────────────────────────────────────────────────────────────

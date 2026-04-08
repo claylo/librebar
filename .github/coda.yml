@@ -1,0 +1,33 @@
+# gh-coda config
+# See: https://github.com/lovelesslabs/gh-coda
+
+# Merge settings
+auto_merge: true
+delete_branch_on_merge: true
+allow_squash_merge: true
+allow_merge_commit: false
+allow_rebase_merge: true
+
+# Features
+enable_discussions: false
+enable_projects: false
+enable_wiki: false
+
+# Security
+enable_secret_scanning: true
+enable_secret_scanning_push_protection: true
+dependabot_alerts: true
+dependabot_security_updates: true
+
+# 1Password secrets sync (optional)
+secrets_tags: claylo-github-actions
+secrets_app: actions
+
+# variables:
+#   CRATES_IO_ENABLED: true
+#   HOMEBREW_ENABLED: true
+#   HOMEBREW_TAP: "claylo/homebrew-tap"
+#   GPG_SIGNING_ENABLED: true
+#   NPM_ENABLED: true
+#   SBOM_ENABLED: true
+#   AUTO_RELEASE_ENABLED: false

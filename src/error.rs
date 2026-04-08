@@ -26,6 +26,14 @@ pub enum Error {
     #[error("no writable log directory found")]
     LogDirNotWritable,
 
+    /// OpenTelemetry initialization failed.
+    #[error("failed to initialize OpenTelemetry: {0}")]
+    OtelInit(Box<dyn std::error::Error + Send + Sync>),
+
+    /// Shutdown signal handler registration failed.
+    #[error("failed to register shutdown handler: {0}")]
+    ShutdownInit(Box<dyn std::error::Error + Send + Sync>),
+
     /// I/O error during initialization.
     #[error(transparent)]
     Io(#[from] std::io::Error),
