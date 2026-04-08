@@ -1,6 +1,6 @@
 # Rebar
 
-Rust application foundation crate. Wire up CLI flags, layered config, and structured logging in about 30 lines instead of 1,500.
+Rust application foundation crate. Wire up CLI flags, layered config, and structured logging in about 30 lines.
 
 ```rust
 use anyhow::Result;

@@ -3,6 +3,27 @@
 //! Provides a custom tracing Layer that writes JSONL to file with daily
 //! rotation. All logging goes to files or stderr — never stdout, which
 //! is reserved for application output (e.g., MCP server communication).
+//!
+//! # JSONL output schema
+//!
+//! Each log line is a JSON object with these fields:
+//! - `timestamp` — RFC 3339 UTC (e.g., `2026-04-08T15:30:00.123Z`)
+//! - `level` — `trace`, `debug`, `info`, `warn`, or `error`
+//! - `target` — Rust module path of the log callsite
+//! - `message` — the formatted log message (from `tracing::info!("...")`)
+//! - Plus any structured fields from spans and events
+//!
+//! # Log directory resolution
+//!
+//! Priority (first writable wins):
+//! 1. `{APP}_LOG_PATH` env var — exact file path
+//! 2. `{APP}_LOG_DIR` env var — directory, file name derived from service
+//! 3. Config `log_dir` — from the application's config struct
+//! 4. Platform default — `~/Library/Logs/{app}/` on macOS,
+//!    `$XDG_STATE_HOME/{app}/logs/` on Linux
+//! 5. `/var/log` on Unix
+//! 6. Current working directory (last resort)
+//! 7. stderr fallback if nothing is writable
 
 use serde_json::{Map, Value};
 use std::fs::OpenOptions;
@@ -221,6 +242,9 @@ pub fn format_timestamp() -> String {
 }
 
 /// Convert days since Unix epoch to (year, month, day).
+///
+/// Uses Howard Hinnant's civil calendar algorithm.
+/// Reference: <https://howardhinnant.github.io/date_algorithms.html#civil_from_days>
 const fn days_to_ymd(days: i64) -> (i32, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -237,6 +261,8 @@ const fn days_to_ymd(days: i64) -> (i32, u32, u32) {
 
 // ─── Internal ───────────────────────────────────────────────────────
 
+/// Build a non-blocking log writer by resolving the log target from env vars
+/// and config, then wrapping a daily-rolling file appender in a non-blocking writer.
 fn build_log_writer(
     service: &str,
     env_log_path: &str,
@@ -290,6 +316,7 @@ fn log_target_from_path(path: PathBuf) -> std::result::Result<LogTarget, String>
     })
 }
 
+/// Verify a directory is writable by creating it (if needed) and opening a file for append.
 fn ensure_writable(dir: &Path, file_name: &str) -> std::result::Result<(), String> {
     std::fs::create_dir_all(dir)
         .map_err(|e| format!("Failed to create log directory {}: {e}", dir.display()))?;
@@ -306,6 +333,11 @@ fn ensure_writable(dir: &Path, file_name: &str) -> std::result::Result<(), Strin
 
 // ─── JSON Log Layer ─────────────────────────────────────────────────
 
+/// Custom tracing Layer that serializes events and span context to JSONL.
+///
+/// Each event becomes one JSON object per line. Span fields from the
+/// current scope are flattened into the event object (root-to-leaf order,
+/// later fields win on collision).
 struct JsonLogLayer<W> {
     writer: W,
 }
@@ -390,11 +422,15 @@ where
     }
 }
 
+/// Span extension data: the accumulated key-value fields recorded on a span.
+/// Stored in span extensions and cloned into each event emitted within the span.
 #[derive(Clone, Debug)]
 struct SpanFields {
     values: Map<String, Value>,
 }
 
+/// Visitor that collects tracing fields into a JSON map.
+/// Used by both span creation (on_new_span) and event recording (on_event).
 #[derive(Default)]
 struct JsonVisitor {
     values: Map<String, Value>,

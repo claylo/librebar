@@ -31,5 +31,5 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-/// Result type alias using rebar's [`Error`].
+/// Result type alias using rebar's [`enum@Error`].
 pub type Result<T> = std::result::Result<T, Error>;

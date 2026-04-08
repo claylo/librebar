@@ -1,15 +1,46 @@
 //! Rebar: Rust application foundation crate.
 //!
 //! Feature-gated modules for CLI, config, logging, and more.
-//! Use the builder to orchestrate initialization:
+//! Each module is usable independently (escape hatches) or wired
+//! together through the builder.
+//!
+//! # Builder usage
 //!
 //! ```ignore
+//! use clap::Parser;
+//!
+//! #[derive(Parser)]
+//! struct Cli {
+//!     #[command(flatten)]
+//!     pub common: rebar::cli::CommonArgs,
+//!     #[command(subcommand)]
+//!     pub command: Option<Commands>,
+//! }
+//!
+//! let cli = Cli::parse();
+//!
 //! let app = rebar::init(env!("CARGO_PKG_NAME"))
 //!     .with_cli(cli.common)
 //!     .config::<Config>()
 //!     .logging()
 //!     .start()?;
 //! ```
+//!
+//! # Type-state pattern
+//!
+//! The builder uses a type-state transition to carry the config type:
+//! - [`init()`] returns [`Builder`]
+//! - [`Builder::config`] / [`Builder::config_from_file`] / [`Builder::with_config`]
+//!   transition to [`ConfiguredBuilder<C>`]
+//! - Each builder has its own [`start()`](Builder::start) returning the
+//!   appropriate [`App`] type (`App<()>` or `App<C>`)
+//!
+//! # Initialization order
+//!
+//! [`start()`](Builder::start) initializes subsystems in this order:
+//! 1. Load config (if requested via `.config::<C>()` or `.config_from_file()`)
+//! 2. Initialize logging (reads verbosity from CLI flags if provided)
+//! 3. Return [`App<C>`] holding all initialized state and guards
 #![deny(unsafe_code)]
 
 pub mod error;
@@ -221,6 +252,11 @@ impl Builder {
 
 // ─── ConfiguredBuilder ──────────────────────────────────────────────
 
+/// How config should be loaded when `start()` is called.
+///
+/// - `Discover`: walk up from cwd looking for config files, merge with user config
+/// - `File`: load from a specific path (skips user config)
+/// - `Preloaded`: use a config value provided directly (no file I/O)
 #[cfg(feature = "config")]
 enum CfgSource<C> {
     Discover,

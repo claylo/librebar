@@ -8,6 +8,29 @@
 //! - TOML (`.toml`)
 //! - YAML (`.yaml`, `.yml`)
 //! - JSON (`.json`)
+//!
+//! # Merge order (lowest to highest precedence)
+//!
+//! 1. `C::default()` — struct defaults from `#[serde(default)]`
+//! 2. User config — `~/.config/{app}/config.{ext}` (XDG on macOS/Linux)
+//! 3. Project config — found by walking up from cwd (`.config/{app}.ext`,
+//!    `.{app}.ext`, `{app}.ext`)
+//! 4. Explicit files — passed via [`ConfigLoader::with_file()`]
+//!
+//! All layers are parsed into `serde_json::Value` and deep-merged
+//! (objects merge recursively, scalars/arrays replace). The merged
+//! result is deserialized into the user's config type.
+//!
+//! # Discovery
+//!
+//! Project config search walks up from the search root, checking each
+//! directory for config files in this order per directory:
+//! 1. `.config/{app}.{ext}` (dotconfig directory)
+//! 2. `.{app}.{ext}` (dotfile)
+//! 3. `{app}.{ext}` (plain file)
+//!
+//! Search stops at a `.git` boundary by default (configurable via
+//! [`ConfigLoader::with_boundary_marker()`]).
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
@@ -152,6 +175,8 @@ pub fn parse_file(path: &Utf8Path) -> Result<Value> {
         Some("json") => parse_json(&content),
         _ => parse_toml(&content), // default to TOML
     }
+    // Replace the placeholder path ("<toml>", etc.) from the format-specific
+    // parsers with the actual file path for better error messages.
     .map_err(|e| match e {
         Error::ConfigParse { source, .. } => Error::ConfigParse {
             path: path.to_string(),
