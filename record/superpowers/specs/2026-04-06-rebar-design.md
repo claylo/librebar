@@ -233,6 +233,8 @@ Key change from current template: **HTTP-proto + hyper-client as default.** gRPC
 - Reads endpoint from config or `OTEL_EXPORTER_OTLP_ENDPOINT` env var
 - Protocol selection via `OTEL_EXPORTER_OTLP_PROTOCOL` env var (http/protobuf default, grpc when `otel-grpc` enabled)
 
+**Implementation note:** cli-batteries uses composable `SubscriberExt` layers where each layer has optional filter and multiple export targets can run simultaneously (e.g., file logging + OTLP export). Follow the same composable layer-stack pattern rather than a monolithic subscriber config.
+
 Escape hatch: `rebar::otel::build_provider()` for custom OTEL setup, pass to builder via `.with_tracer_provider()`.
 
 ## Lifecycle Features
@@ -252,6 +254,8 @@ tokio::select! {
 
 Registers SIGTERM/SIGINT handlers. OTEL TracerProvider flushed automatically. Logging guard dropped cleanly.
 
+**Implementation note:** Use `tokio::sync::watch::channel(false)` rather than a oneshot for the shutdown signal. This is the pattern used by cli-batteries (~/source/reference/cli-batteries). Benefits: multiple tasks can `await_shutdown()` without ownership issues, resolves immediately if already shut down, composes cleanly with `tokio::select!`. Keep it in `App` struct (not a global singleton like cli-batteries does).
+
 ### Crash Reporting (feature: `crash`, roadmap #30)
 
 Custom panic hook. Writes structured crash info (panic message, backtrace, OS, version) to XDG cache. User-friendly message instead of raw stack trace. No network dependency.
@@ -267,6 +271,8 @@ Checks GitHub releases API via `http` feature. Caches result in XDG cache (once 
 ### Diagnostics (feature: `diagnostics`, roadmap #39 + #40)
 
 Doctor command framework — register checks, run them, report summary. Debug bundle export — collects sanitized config, recent logs, doctor output into a tar.gz.
+
+**Implementation note:** cli-batteries logs version/build info at startup (git commit, host, PID, cores, build date) via a `build.rs` helper that captures metadata at compile time. Rebar should provide a similar `BuildInfo` struct or macro that consumers can pass to the builder (`.with_build_info(build_info!())`), and the diagnostics/doctor framework can include it in debug bundles. Also consider a heartbeat pattern (periodic uptime log, e.g., every 5min via `tokio::select!` on shutdown signal) as a builder option for long-running services.
 
 ### HTTP Client (feature: `http`, roadmap #31)
 

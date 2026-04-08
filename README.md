@@ -5,6 +5,14 @@ Rust application foundation crate. Wire up CLI flags, layered config, and struct
 ```rust
 use anyhow::Result;
 use clap::Parser;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct Config {
+    log_level: rebar::config::LogLevel,
+    database_url: Option<String>,
+}
 
 #[derive(Parser)]
 #[command(name = "myapp", about = "Does useful things")]
