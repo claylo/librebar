@@ -1,0 +1,109 @@
+[package]
+name = "rebar"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89.0"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+repository = "https://github.com/claylo/rebar"
+homepage = "https://github.com/claylo/rebar"
+documentation = "https://docs.rs/rebar"
+description = "Rust application foundation crate"
+keywords = []
+categories = []
+exclude = [
+    "/.claude/",
+    "/.github/",
+    "/.handoffs/",
+    "/.config",
+    "/.justfile",
+    "/bench-reports/",
+    "/scripts/",
+    "/docs/",
+    "/scratch/",
+]
+
+[dependencies]
+# Always present (core)
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+thiserror = "2.0"
+
+# Feature: cli
+clap = { version = "4.6", features = ["derive"], optional = true }
+owo-colors = { version = "4.3", features = ["supports-colors"], optional = true }
+anyhow = { version = "1.0", optional = true }
+
+# Feature: config
+toml = { version = "0.8", optional = true }
+serde-saphyr = { version = "0.0", optional = true }
+serde_json = { version = "1.0", optional = true }
+camino = { version = "1.2", features = ["serde1"], optional = true }
+directories = { version = "6.0", optional = true }
+
+# Feature: logging
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-appender = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tempfile = "3.27"
+serde_json = "1.0"
+
+[features]
+cli = ["dep:clap", "dep:owo-colors", "dep:anyhow"]
+config = ["dep:toml", "dep:serde-saphyr", "dep:serde_json", "dep:camino", "dep:directories"]
+logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:serde_json", "dep:directories"]
+
+[lints.rust]
+# Use "deny" instead of "forbid" to allow benchmark harnesses to override
+# when their instrumentation machinery requires it
+unsafe_code = "deny"
+# Encourage documentation - warn on public items missing docs
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+nursery = "warn"
+
+# Optimize dependencies in dev mode for faster tests
+# (keeps main crate unoptimized for fast incremental builds)
+[profile.dev.package."*"]
+debug = 0
+opt-level = 1
+
+[profile.dev.build-override]
+debug = 0
+opt-level = 1
+
+# Reduce debug info size (line tables only, no variable info)
+# Light optimization for better runtime without killing incremental builds
+[profile.dev]
+debug = "line-tables-only"
+opt-level = 1
+# On macOS, keep debug info from exploding into huge scattered dSYM trees
+split-debuginfo = "packed"
+codegen-units = 256
+
+# Test profile with full debug symbols for profiling
+[profile.test]
+inherits = "dev"
+codegen-units = 256
+debug = true
+
+# Release profile with reduced debug info
+[profile.release]
+debug = "line-tables-only"
+
+# Debug-friendly profile for investigating mysteries (hangs, crashes, etc.)
+# Usage: cargo build --profile mystery
+[profile.mystery]
+inherits = "release"
+opt-level = 1
+debug = true
+strip = false
+
+# Optimized profile for benchmarks
+[profile.bench]
+inherits = "release"
+lto = "thin"
+debug = "line-tables-only"

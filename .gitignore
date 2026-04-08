@@ -1,0 +1,10 @@
+dist/
+commit.txt
+scratch/
+.claude/
+
+debug/
+target/
+
+PRIVATE_MEMORY.md
+.private-journal/
