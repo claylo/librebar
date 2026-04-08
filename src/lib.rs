@@ -24,3 +24,325 @@ pub mod config;
 pub mod logging;
 
 pub use error::{Error, Result};
+
+// ─── App ────────────────────────────────────────────────────────────
+
+/// The initialized application state.
+///
+/// Holds config, CLI args, and guards for logging/tracing.
+/// `C` is the user's config type (defaults to `()` when config is not used).
+pub struct App<C = ()> {
+    app_name: String,
+    config: C,
+    #[cfg(feature = "config")]
+    config_sources: config::ConfigSources,
+    #[cfg(feature = "cli")]
+    cli: cli::CommonArgs,
+    #[cfg(feature = "logging")]
+    _logging_guard: Option<logging::LoggingGuard>,
+}
+
+impl<C> App<C> {
+    /// Returns a reference to the loaded configuration.
+    pub const fn config(&self) -> &C {
+        &self.config
+    }
+
+    /// Returns the application name.
+    pub fn app_name(&self) -> &str {
+        &self.app_name
+    }
+}
+
+#[cfg(feature = "config")]
+impl<C> App<C> {
+    /// Returns metadata about which config files were loaded.
+    pub const fn config_sources(&self) -> &config::ConfigSources {
+        &self.config_sources
+    }
+}
+
+#[cfg(feature = "cli")]
+impl<C> App<C> {
+    /// Returns the parsed common CLI arguments.
+    pub const fn cli(&self) -> &cli::CommonArgs {
+        &self.cli
+    }
+}
+
+// ─── Builder ────────────────────────────────────────────────────────
+
+/// Start building a rebar application.
+///
+/// ```ignore
+/// let app = rebar::init(env!("CARGO_PKG_NAME"))
+///     .with_cli(cli.common)
+///     .config::<Config>()
+///     .logging()
+///     .start()?;
+/// ```
+pub fn init(app_name: &str) -> Builder {
+    Builder {
+        app_name: app_name.to_string(),
+        #[cfg(feature = "cli")]
+        cli: None,
+        #[cfg(feature = "logging")]
+        enable_logging: false,
+    }
+}
+
+/// Builder for rebar application initialization.
+///
+/// Wires config discovery, logging setup, and CLI args in the correct
+/// initialization order.
+pub struct Builder {
+    app_name: String,
+    #[cfg(feature = "cli")]
+    cli: Option<cli::CommonArgs>,
+    #[cfg(feature = "logging")]
+    enable_logging: bool,
+}
+
+impl Builder {
+    /// Provide parsed CLI common arguments.
+    #[cfg(feature = "cli")]
+    pub fn with_cli(mut self, common: cli::CommonArgs) -> Self {
+        self.cli = Some(common);
+        self
+    }
+
+    /// Enable JSONL logging.
+    #[cfg(feature = "logging")]
+    pub const fn logging(mut self) -> Self {
+        self.enable_logging = true;
+        self
+    }
+
+    /// Finalize initialization without config.
+    ///
+    /// Returns `App<()>`. Use [`config_from_file`](Self::config_from_file)
+    /// or [`with_config`](Self::with_config) to get `App<C>` with a typed config.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if logging initialization fails.
+    pub fn start(self) -> Result<App> {
+        #[cfg(feature = "logging")]
+        let logging_guard = if self.enable_logging {
+            let (quiet, verbose) = self.cli_flags();
+            let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
+            let filter = logging::env_filter(quiet, verbose, "info");
+            Some(logging::init(&log_cfg, filter)?)
+        } else {
+            None
+        };
+
+        Ok(App {
+            app_name: self.app_name,
+            config: (),
+            #[cfg(feature = "config")]
+            config_sources: config::ConfigSources::default(),
+            #[cfg(feature = "cli")]
+            cli: self.cli.unwrap_or_else(default_cli),
+            #[cfg(feature = "logging")]
+            _logging_guard: logging_guard,
+        })
+    }
+
+    #[cfg(all(feature = "logging", feature = "cli"))]
+    fn cli_flags(&self) -> (bool, u8) {
+        self.cli
+            .as_ref()
+            .map_or((false, 0), |c| (c.quiet, c.verbose))
+    }
+
+    #[cfg(all(feature = "logging", not(feature = "cli")))]
+    fn cli_flags(&self) -> (bool, u8) {
+        (false, 0)
+    }
+}
+
+// ─── Config builder transitions ─────────────────────────────────────
+
+#[cfg(feature = "config")]
+impl Builder {
+    /// Load config from a specific file.
+    ///
+    /// Transitions the builder to [`ConfiguredBuilder<C>`] which holds
+    /// the config type information.
+    pub fn config_from_file<C>(self, path: &camino::Utf8Path) -> ConfiguredBuilder<C>
+    where
+        C: serde::de::DeserializeOwned + Default + serde::Serialize,
+    {
+        ConfiguredBuilder {
+            app_name: self.app_name,
+            #[cfg(feature = "cli")]
+            cli: self.cli,
+            #[cfg(feature = "logging")]
+            enable_logging: self.enable_logging,
+            config_source: CfgSource::File(path.to_path_buf()),
+        }
+    }
+
+    /// Enable config discovery from standard locations.
+    ///
+    /// Transitions the builder to [`ConfiguredBuilder<C>`].
+    pub fn config<C>(self) -> ConfiguredBuilder<C>
+    where
+        C: serde::de::DeserializeOwned + Default + serde::Serialize,
+    {
+        ConfiguredBuilder {
+            app_name: self.app_name,
+            #[cfg(feature = "cli")]
+            cli: self.cli,
+            #[cfg(feature = "logging")]
+            enable_logging: self.enable_logging,
+            config_source: CfgSource::Discover,
+        }
+    }
+
+    /// Provide a pre-loaded config (escape hatch).
+    ///
+    /// Transitions the builder to [`ConfiguredBuilder<C>`].
+    pub fn with_config<C>(self, config: C) -> ConfiguredBuilder<C>
+    where
+        C: serde::Serialize,
+    {
+        ConfiguredBuilder {
+            app_name: self.app_name,
+            #[cfg(feature = "cli")]
+            cli: self.cli,
+            #[cfg(feature = "logging")]
+            enable_logging: self.enable_logging,
+            config_source: CfgSource::Preloaded(config),
+        }
+    }
+}
+
+// ─── ConfiguredBuilder ──────────────────────────────────────────────
+
+#[cfg(feature = "config")]
+enum CfgSource<C> {
+    Discover,
+    File(camino::Utf8PathBuf),
+    Preloaded(C),
+}
+
+/// Builder with config type information.
+///
+/// Created by [`Builder::config`], [`Builder::config_from_file`],
+/// or [`Builder::with_config`]. Call [`.start()`](Self::start) to finalize.
+#[cfg(feature = "config")]
+pub struct ConfiguredBuilder<C> {
+    app_name: String,
+    #[cfg(feature = "cli")]
+    cli: Option<cli::CommonArgs>,
+    #[cfg(feature = "logging")]
+    enable_logging: bool,
+    config_source: CfgSource<C>,
+}
+
+#[cfg(feature = "config")]
+impl<C> ConfiguredBuilder<C> {
+    /// Provide parsed CLI common arguments.
+    #[cfg(feature = "cli")]
+    pub fn with_cli(mut self, common: cli::CommonArgs) -> Self {
+        self.cli = Some(common);
+        self
+    }
+
+    /// Enable JSONL logging.
+    #[cfg(feature = "logging")]
+    pub const fn logging(mut self) -> Self {
+        self.enable_logging = true;
+        self
+    }
+
+    #[cfg(all(feature = "logging", feature = "cli"))]
+    fn cli_flags(&self) -> (bool, u8) {
+        self.cli
+            .as_ref()
+            .map_or((false, 0), |c| (c.quiet, c.verbose))
+    }
+
+    #[cfg(all(feature = "logging", not(feature = "cli")))]
+    fn cli_flags(&self) -> (bool, u8) {
+        (false, 0)
+    }
+}
+
+#[cfg(feature = "config")]
+impl<C> ConfiguredBuilder<C>
+where
+    C: serde::de::DeserializeOwned + Default + serde::Serialize,
+{
+    /// Finalize initialization with config.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if config loading or logging initialization fails.
+    pub fn start(self) -> Result<App<C>> {
+        // Capture cli flags before moving fields out of self
+        #[cfg(feature = "logging")]
+        let cli_flags = self.cli_flags();
+        #[cfg(feature = "logging")]
+        let do_logging = self.enable_logging;
+
+        let (config, sources) = match self.config_source {
+            CfgSource::Discover => {
+                let cwd = std::env::current_dir().map_err(crate::Error::Io)?;
+                let cwd = camino::Utf8PathBuf::try_from(cwd).map_err(|e| {
+                    crate::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "current directory is not valid UTF-8: {}",
+                            e.into_path_buf().display()
+                        ),
+                    ))
+                })?;
+                config::ConfigLoader::new(&self.app_name)
+                    .with_project_search(&cwd)
+                    .load::<C>()?
+            }
+            CfgSource::File(path) => config::ConfigLoader::new(&self.app_name)
+                .with_user_config(false)
+                .with_file(&path)
+                .load::<C>()?,
+            CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
+        };
+
+        #[cfg(feature = "logging")]
+        let logging_guard = if do_logging {
+            let (quiet, verbose) = cli_flags;
+            let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
+            let filter = logging::env_filter(quiet, verbose, "info");
+            Some(logging::init(&log_cfg, filter)?)
+        } else {
+            None
+        };
+
+        Ok(App {
+            app_name: self.app_name,
+            config,
+            config_sources: sources,
+            #[cfg(feature = "cli")]
+            cli: self.cli.unwrap_or_else(default_cli),
+            #[cfg(feature = "logging")]
+            _logging_guard: logging_guard,
+        })
+    }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+#[cfg(feature = "cli")]
+const fn default_cli() -> cli::CommonArgs {
+    cli::CommonArgs {
+        version_only: false,
+        chdir: None,
+        quiet: false,
+        verbose: 0,
+        color: cli::ColorChoice::Auto,
+        json: false,
+    }
+}
