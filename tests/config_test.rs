@@ -1,5 +1,5 @@
-#![cfg(feature = "config")]
 #![allow(missing_docs)]
+#![cfg(feature = "config")]
 
 use std::fs;
 
