@@ -1,5 +1,5 @@
-#![cfg(feature = "cli")]
 #![allow(missing_docs)]
+#![cfg(feature = "cli")]
 
 use clap::Parser;
 
