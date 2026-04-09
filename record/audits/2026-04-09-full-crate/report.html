@@ -583,20 +583,26 @@ a.nav-title:hover {
       <h2>The Supply Chain Surface</h2>
       <p class="thesis"><em>Dependency choices are deliberate and well-gated, except opentelemetry-otlp whose default features smuggle a redundant HTTP stack into the tree.
 </em></p>
-      <div class="flow-diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 130" font-family="system-ui, -apple-system, sans-serif">
-  <line x1="50" y1="50" x2="410" y2="50" stroke="#d1d5db" stroke-width="1"/>
-  <circle cx="50" cy="50" r="4" fill="#1a1a1a"/>
-  <text x="50" y="38" text-anchor="middle" font-size="11" fill="#1a1a1a">Consumer enables otel feature</text>
-  <circle cx="170" cy="50" r="4" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="170" y="38" text-anchor="middle" font-size="11" fill="#1a1a1a">Cargo resolves otel deps</text>
-  <rect x="286" y="46" width="8" height="8" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5" transform="rotate(45 290 50)"/>
-  <text x="290" y="38" text-anchor="middle" font-size="11" fill="#1a1a1a">opentelemetry-otlp defaults?</text>
-  <line x1="290" y1="57" x2="290" y2="72" stroke="#dc2626" stroke-width="1.5"/>
-  <text x="290" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#dc2626">reqwest pulled</text>
-  <text x="290" y="96" text-anchor="middle" font-size="7.5" fill="rgba(220,38,38,0.7)" font-weight="500" letter-spacing="0.5">SIGNIFICANT</text>
-  <circle cx="410" cy="50" r="4" fill="#1a1a1a"/>
-  <circle cx="410" cy="50" r="2" fill="#fffff8"/>
-  <text x="410" y="38" text-anchor="middle" font-size="11" fill="#6b7280">Feature compiled</text>
+      <div class="flow-diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 0 600 340" font-family="system-ui, -apple-system, sans-serif">
+  <line x1="136" y1="200" x2="224" y2="200" stroke="#d1d5db" stroke-width="1"/>
+  <text x="210" y="194" text-anchor="middle" font-size="8" fill="#6b7280">no</text>
+  <text x="122" y="220" text-anchor="end" font-size="8" fill="#6b7280">yes</text>
+  <line x1="130" y1="80" x2="130" y2="260" stroke="#d1d5db" stroke-width="1"/>
+  <circle cx="130" cy="80" r="4" fill="#1a1a1a"/>
+  <text x="120" y="84" text-anchor="end" font-size="11" fill="#1a1a1a">Consumer enables otel feature</text>
+  <circle cx="130" cy="140" r="4" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="120" y="144" text-anchor="end" font-size="11" fill="#1a1a1a">Cargo resolves otel deps</text>
+  <rect x="126" y="196" width="8" height="8" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5" transform="rotate(45 130 200)"/>
+  <text x="120" y="204" text-anchor="end" font-size="11" fill="#1a1a1a">opentelemetry-otlp defaults?</text>
+  <line x1="360" y1="150" x2="140" y2="200" stroke="#dc2626" stroke-width="0.5"/>
+  <polygon points="136,200 140,198 140,202" fill="#dc2626"/>
+  <text x="366" y="148" font-size="9" font-weight="600" fill="#dc2626">reqwest pulled</text>
+  <text x="366" y="158" font-size="7" fill="rgba(220,38,38,0.7)" font-weight="500" letter-spacing="0.5">SIGNIFICANT</text>
+  <circle cx="130" cy="260" r="4" fill="#1a1a1a"/>
+  <circle cx="130" cy="260" r="2" fill="#fffff8"/>
+  <text x="120" y="264" text-anchor="end" font-size="11" fill="#6b7280">Feature compiled</text>
+  <circle cx="230" cy="200" r="4" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="244" y="204" font-size="11" fill="#1a1a1a">Only hyper-client transport</text>
 </svg></div>
       <article id="otel-otlp-default-features" class="finding" data-slug="otel-otlp-default-features" data-concern="significant">
         <h3>opentelemetry-otlp default features pull reqwest unnecessarily</h3>
@@ -721,20 +727,26 @@ the security policy.
       <h2>The Error Handling Surface</h2>
       <p class="thesis"><em>Error propagation is consistent and panic-free, but the error type architecture erases concrete causes behind Box&lt;dyn Error&gt;, and several silent discards lack documentation of intent.
 </em></p>
-      <div class="flow-diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 130" font-family="system-ui, -apple-system, sans-serif">
-  <line x1="50" y1="50" x2="410" y2="50" stroke="#d1d5db" stroke-width="1"/>
-  <circle cx="50" cy="50" r="4" fill="#1a1a1a"/>
-  <text x="50" y="38" text-anchor="middle" font-size="11" fill="#1a1a1a">Operation fails</text>
-  <circle cx="170" cy="50" r="4" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="170" y="38" text-anchor="middle" font-size="11" fill="#1a1a1a">Error variant created</text>
-  <line x1="170" y1="57" x2="170" y2="72" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="170" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#1a1a1a">source erased</text>
-  <text x="170" y="96" text-anchor="middle" font-size="7.5" fill="#6b7280" font-weight="500" letter-spacing="0.5">MODERATE</text>
-  <rect x="286" y="46" width="8" height="8" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5" transform="rotate(45 290 50)"/>
-  <text x="290" y="38" text-anchor="middle" font-size="11" fill="#1a1a1a">Caller matches variant?</text>
-  <circle cx="410" cy="50" r="4" fill="#1a1a1a"/>
-  <circle cx="410" cy="50" r="2" fill="#fffff8"/>
-  <text x="410" y="38" text-anchor="middle" font-size="11" fill="#6b7280">Caller handles error</text>
+      <div class="flow-diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 0 600 340" font-family="system-ui, -apple-system, sans-serif">
+  <line x1="136" y1="200" x2="224" y2="200" stroke="#d1d5db" stroke-width="1"/>
+  <text x="210" y="194" text-anchor="middle" font-size="8" fill="#6b7280">no</text>
+  <text x="122" y="220" text-anchor="end" font-size="8" fill="#6b7280">yes</text>
+  <line x1="130" y1="80" x2="130" y2="260" stroke="#d1d5db" stroke-width="1"/>
+  <circle cx="130" cy="80" r="4" fill="#1a1a1a"/>
+  <text x="120" y="84" text-anchor="end" font-size="11" fill="#1a1a1a">Operation fails</text>
+  <circle cx="130" cy="140" r="4" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="120" y="144" text-anchor="end" font-size="11" fill="#1a1a1a">Error variant created</text>
+  <line x1="360" y1="90" x2="140" y2="140" stroke="#1a1a1a" stroke-width="0.5"/>
+  <polygon points="136,140 140,138 140,142" fill="#1a1a1a"/>
+  <text x="366" y="88" font-size="9" font-weight="600" fill="#1a1a1a">source erased</text>
+  <text x="366" y="98" font-size="7" fill="#6b7280" font-weight="500" letter-spacing="0.5">MODERATE</text>
+  <rect x="126" y="196" width="8" height="8" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5" transform="rotate(45 130 200)"/>
+  <text x="120" y="204" text-anchor="end" font-size="11" fill="#1a1a1a">Caller matches variant?</text>
+  <circle cx="130" cy="260" r="4" fill="#1a1a1a"/>
+  <circle cx="130" cy="260" r="2" fill="#fffff8"/>
+  <text x="120" y="264" text-anchor="end" font-size="11" fill="#6b7280">Caller handles error</text>
+  <circle cx="230" cy="200" r="4" fill="#fffff8" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="244" y="204" font-size="11" fill="#1a1a1a">Caller must downcast Box</text>
 </svg></div>
       <article id="error-type-erasure" class="finding" data-slug="error-type-erasure" data-concern="moderate">
         <h3>Error variants erase concrete source types behind Box&lt;dyn Error&gt;</h3>
@@ -1883,42 +1895,6 @@ evaluate whether any exist before the 1.0 boundary.
 				animationDuration: 600
 			})
 		});
-		const markerPriority = {
-			del: 2,
-			mark: 1,
-			ins: 0
-		};
-		const markerColors = {
-			del: "#dc2626",
-			mark: "#6b7280",
-			ins: "#16a34a"
-		};
-		const annotatedBlocks = /* @__PURE__ */ new Set();
-		for (const line of document.querySelectorAll(".ec-line.highlight.del, .ec-line.highlight.mark, .ec-line.highlight.ins")) {
-			const ecBlock = line.closest(".expressive-code");
-			if (!ecBlock || annotatedBlocks.has(ecBlock)) continue;
-			annotatedBlocks.add(ecBlock);
-			let topType = "ins";
-			for (const cls of [
-				"del",
-				"mark",
-				"ins"
-			]) if (ecBlock.querySelector(`.ec-line.highlight.${cls}`)) {
-				if (markerPriority[cls] > markerPriority[topType]) topType = cls;
-			}
-			annotations.push({
-				el: ecBlock,
-				annotation: _(ecBlock, {
-					type: "bracket",
-					brackets: ["left"],
-					color: markerColors[topType],
-					strokeWidth: 2,
-					padding: 6,
-					animate: true,
-					animationDuration: 800
-				})
-			});
-		}
 		const observer = new IntersectionObserver((entries) => {
 			for (const entry of entries) if (entry.isIntersecting) {
 				const match = annotations.find((a) => a.el === entry.target);
@@ -2089,16 +2065,6 @@ evaluate whether any exist before the 1.0 boundary.
 			animate: true,
 			animationDuration: 400
 		}).show();
-		for (const article of slideEl.querySelectorAll("article.finding[data-concern=\"critical\"], article.finding[data-concern=\"significant\"]")) {
-			const pre = article.querySelector("pre.evidence");
-			if (pre) _(pre, {
-				type: "bracket",
-				color: "#dc2626",
-				brackets: ["left"],
-				animate: true,
-				animationDuration: 600
-			}).show();
-		}
 	}
 	function nextSlide() {
 		showSlide(currentSlide + 1);
