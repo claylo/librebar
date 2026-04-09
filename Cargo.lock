@@ -1368,6 +1368,7 @@ dependencies = [
 name = "rebar"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "camino",
  "clap",
  "directories",
