@@ -66,6 +66,11 @@ pub mod crash;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 
+#[cfg(feature = "logging")]
+use tracing_subscriber::layer::SubscriberExt;
+#[cfg(feature = "logging")]
+use tracing_subscriber::util::SubscriberInitExt;
+
 pub use error::{Error, Result};
 
 // ─── App ────────────────────────────────────────────────────────────
@@ -216,7 +221,14 @@ impl Builder {
             let (quiet, verbose) = self.cli_flags();
             let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
             let filter = logging::env_filter(quiet, verbose, "info");
-            Some(logging::init(&log_cfg, filter)?)
+            let (log_layer, log_guard) = logging::build_json_layer(&log_cfg)?;
+
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(log_layer)
+                .init();
+
+            Some(logging::LoggingGuard::from_guard(log_guard))
         } else {
             None
         };
@@ -453,7 +465,14 @@ where
             let (quiet, verbose) = cli_flags;
             let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
             let filter = logging::env_filter(quiet, verbose, "info");
-            Some(logging::init(&log_cfg, filter)?)
+            let (log_layer, log_guard) = logging::build_json_layer(&log_cfg)?;
+
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(log_layer)
+                .init();
+
+            Some(logging::LoggingGuard::from_guard(log_guard))
         } else {
             None
         };

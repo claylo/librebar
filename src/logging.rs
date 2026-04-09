@@ -83,12 +83,48 @@ pub struct LoggingGuard {
     _log_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
+impl LoggingGuard {
+    /// Create a guard from a raw worker guard (used by the builder).
+    pub(crate) const fn from_guard(guard: tracing_appender::non_blocking::WorkerGuard) -> Self {
+        Self { _log_guard: guard }
+    }
+}
+
 /// Initialize logging and return a guard that must be held.
+///
+/// This is the standalone escape hatch — it builds the JSON layer and
+/// initializes the global subscriber in one call. For composing multiple
+/// layers (e.g., logging + OTEL), use [`build_json_layer()`] instead.
 ///
 /// # Errors
 ///
 /// Falls back to stderr if no writable log directory is found.
 pub fn init(cfg: &LoggingConfig, env_filter: EnvFilter) -> Result<LoggingGuard> {
+    let (log_layer, log_guard) = build_json_layer(cfg)?;
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(log_layer)
+        .init();
+
+    tracing::debug!("logging initialized");
+
+    Ok(LoggingGuard {
+        _log_guard: log_guard,
+    })
+}
+
+/// Build the JSON log layer and its writer guard without initializing
+/// the global subscriber.
+///
+/// Used internally by the builder to compose multiple layers (logging + OTEL)
+/// on one registry. For standalone use, prefer [`init()`].
+pub(crate) fn build_json_layer(
+    cfg: &LoggingConfig,
+) -> Result<(
+    JsonLogLayer<tracing_appender::non_blocking::NonBlocking>,
+    tracing_appender::non_blocking::WorkerGuard,
+)> {
     let (log_writer, log_guard) = match build_log_writer(
         &cfg.service,
         &cfg.env_log_path,
@@ -103,17 +139,7 @@ pub fn init(cfg: &LoggingConfig, env_filter: EnvFilter) -> Result<LoggingGuard> 
     };
 
     let log_layer = JsonLogLayer::new(log_writer);
-
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(log_layer)
-        .init();
-
-    tracing::debug!("logging initialized");
-
-    Ok(LoggingGuard {
-        _log_guard: log_guard,
-    })
+    Ok((log_layer, log_guard))
 }
 
 /// Build an `EnvFilter` based on CLI flags and environment.
@@ -338,7 +364,7 @@ fn ensure_writable(dir: &Path, file_name: &str) -> std::result::Result<(), Strin
 /// Each event becomes one JSON object per line. Span fields from the
 /// current scope are flattened into the event object (root-to-leaf order,
 /// later fields win on collision).
-struct JsonLogLayer<W> {
+pub(crate) struct JsonLogLayer<W> {
     writer: W,
 }
 
