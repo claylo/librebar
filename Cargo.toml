@@ -63,6 +63,8 @@ fs4 = { version = "0.13", optional = true }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"], optional = true }
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1.9", features = ["client", "http1", "http2"], optional = true }
+hyper-rustls = { version = "0.27", features = ["http1", "http2", "ring", "webpki-tokio"], default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, optional = true }
 
 # Feature: cache
 base64 = { version = "0.22", optional = true }
@@ -95,7 +97,7 @@ otel = ["logging", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:openteleme
 otel-grpc = ["otel", "opentelemetry-otlp/grpc-tonic"]
 mcp = ["dep:rmcp", "dep:tokio"]
 lockfile = ["dep:fs4"]
-http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio"]
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio"]
 cache = ["dep:serde_json", "dep:directories", "dep:base64"]
 update = ["http", "cache", "dep:serde_json"]
 dispatch = ["cli", "dep:which"]

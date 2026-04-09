@@ -1,6 +1,7 @@
-//! HTTP client with tracing integration.
+//! HTTP/HTTPS client with tracing integration.
 //!
 //! Provides a thin wrapper around hyper with:
+//! - TLS via rustls (Mozilla CA roots, no system OpenSSL dependency)
 //! - HTTP/2 with HTTP/1.1 fallback
 //! - Configurable user-agent and timeout
 //! - `#[tracing::instrument]` on every request
@@ -10,16 +11,11 @@
 //!
 //! ```ignore
 //! let client = HttpClient::from_app("my-app", "1.0.0")?;
-//! let resp = client.get("http://example.com/api").await?;
+//! let resp = client.get("https://api.github.com/repos/owner/repo/releases/latest").await?;
 //! if resp.is_success() {
 //!     println!("{}", resp.text()?);
 //! }
 //! ```
-//!
-//! # Note
-//!
-//! This client currently supports HTTP only. HTTPS support will be
-//! added when a TLS connector is wired in.
 
 use std::time::Duration;
 
@@ -65,22 +61,30 @@ impl HttpClientConfig {
 
 // ─── Client ─────────────────────────────────────────────────────────
 
-/// HTTP client with tracing and timeout support.
+/// HTTPS connector type used by the client.
+type HttpsConnector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
+
+/// HTTP/HTTPS client with tracing and timeout support.
 ///
-/// Uses hyper's HTTP/2 with HTTP/1.1 fallback internally.
-/// Connection pooling is handled automatically.
+/// Uses rustls for TLS with Mozilla's CA root certificates.
+/// HTTP/2 with HTTP/1.1 fallback. Connection pooling handled
+/// automatically.
 pub struct HttpClient {
-    inner: hyper_util::client::legacy::Client<
-        hyper_util::client::legacy::connect::HttpConnector,
-        Empty<Bytes>,
-    >,
+    inner: hyper_util::client::legacy::Client<HttpsConnector, Empty<Bytes>>,
     config: HttpClientConfig,
 }
 
 impl HttpClient {
     /// Create a new client from an explicit [`HttpClientConfig`].
     pub fn new(config: HttpClientConfig) -> Result<Self> {
-        let inner = hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build_http();
+        let https = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
+            .map_err(|e| Error::Http(Box::new(std::io::Error::other(e))))?
+            .https_or_http()
+            .enable_all_versions()
+            .build();
+
+        let inner = hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(https);
         Ok(Self { inner, config })
     }
 
@@ -95,8 +99,8 @@ impl HttpClient {
     ///
     /// # Errors
     ///
-    /// - [`Error::Http`] — invalid URL, connection failure, timeout, or
-    ///   I/O error while reading the response body.
+    /// - [`Error::Http`] — invalid URL, connection failure, TLS error,
+    ///   timeout, or I/O error while reading the response body.
     #[tracing::instrument(skip(self), fields(url = %url))]
     pub async fn get(&self, url: &str) -> Result<Response> {
         let uri: hyper::Uri = url

@@ -23,7 +23,7 @@
 //!
 //! | Feature | Module | Use when your app needs... |
 //! |---------|--------|---------------------------|
-//! | `http` | [`http`] | HTTP client with tracing, timeouts, user-agent (cleartext only) |
+//! | `http` | [`http`] | HTTPS client with tracing, timeouts, user-agent (rustls + Mozilla CA roots) |
 //! | `cache` | [`cache`] | File-based key-value cache with TTL (XDG cache directory) |
 //! | `update` | [`update`] | "Update available" notifications via GitHub releases API |
 //!
