@@ -1,0 +1,498 @@
+---
+audit_date: 2026-04-08
+scope: Full crate audit of the rebar library, manifest, tests, and Rust review tool output
+commit: 885e493cf5fcad7d8361d5a7e8cf4352480f8644
+assessment: >-
+  rebar's unsafe and concurrency surfaces are restrained, the full
+  `cargo test --all-features` suite passes, and a rerun of `cargo audit`
+  produced no RustSec advisories. The codebase's main weakness is at the
+  startup/configuration boundary, where initialization APIs that advertise
+  `Result` still fail open on malformed discovered config and still hide panic
+  paths at runtime and tracing-global boundaries. The shutdown primitives are
+  otherwise simple, but one caller contract collapses sender disappearance into
+  successful cancellation. Dependency hygiene is mostly current, though the
+  manifest still carries at least one dead dependency.
+
+narratives:
+  - slug: configuration-surface
+    title: The Configuration Surface
+    thesis: The configuration surface fails open when discovery goes wrong and drops one documented logging input on the floor.
+    verdict: >-
+      The config loader is the highest-risk surface in this crate because it
+      silently accepts malformed discovered config and because the builder's
+      logging path cannot honor a config-sourced `log_dir`. Consumers will see
+      defaults and fallback paths rather than explicit startup failures, which
+      is the wrong failure mode for an application foundation crate.
+    flow:
+      - id: cfg-start
+        label: Discover config
+        type: start
+      - id: cfg-parse
+        label: Parse files
+        type: decision
+        no: cfg-ignore
+        findings:
+          - slug: config-loader-discards-discovered-config-errors
+            label: ignore errors
+      - id: cfg-ignore
+        label: Skip broken file
+        type: process
+        spine: false
+        next: cfg-merge
+        findings:
+          - slug: config-loader-discards-discovered-config-errors
+            label: fail open
+      - id: cfg-merge
+        label: Merge config
+        type: process
+      - id: cfg-log
+        label: Build logging
+        type: process
+        findings:
+          - slug: builder-ignores-configured-log-directory
+            label: log_dir lost
+      - id: cfg-end
+        label: App starts
+        type: end
+    findings:
+      - slug: config-loader-discards-discovered-config-errors
+        title: Discovered config parse failures are silently ignored
+        concern: significant
+        locations:
+          - path: src/config.rs
+            start_line: 267
+            end_line: 283
+        evidence: |
+          // User config (lowest precedence of file sources)
+          if self.include_user_config
+              && let Some(user_config) = self.find_user_config()
+              && let Ok(value) = parse_file(&user_config)
+          {
+              deep_merge(&mut merged, value);
+              sources.user_file = Some(user_config);
+          }
+
+          // Project config
+          if let Some(ref root) = self.project_search_root
+              && let Some(project_config) = self.find_project_config(root)
+              && let Ok(value) = parse_file(&project_config)
+          {
+              deep_merge(&mut merged, value);
+              sources.project_file = Some(project_config);
+          }
+        mechanism: >-
+          Both discovered-file branches only merge on `Ok(value)`. Any read or
+          parse failure from `parse_file` is discarded without an error, warning,
+          or source record, so malformed or unreadable config silently degrades
+          to lower-precedence files or struct defaults. In practice that means
+          operators can ship a broken project config and still get a successful
+          startup with the wrong behavior.
+        remediation: >-
+          Treat discovered config the same way explicit config is treated:
+          propagate read and parse failures as typed startup errors, or make
+          silent ignore an explicit opt-in policy with a recorded diagnostic.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 3
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [builder-ignores-configured-log-directory]
+        effort: small
+        effort_notes: The control flow already returns a typed Result; the missing piece is explicit Err handling for discovered files.
+
+      - slug: builder-ignores-configured-log-directory
+        title: Loaded config never reaches logging target selection
+        concern: moderate
+        locations:
+          - path: src/lib.rs
+            start_line: 502
+            end_line: 530
+          - path: src/logging.rs
+            start_line: 64
+            end_line: 76
+        evidence: |
+          let (config, sources) = match self.config_source {
+              CfgSource::Discover => {
+                  let cwd = std::env::current_dir().map_err(crate::Error::Io)?;
+                  let cwd = camino::Utf8PathBuf::try_from(cwd).map_err(|e| {
+                      crate::Error::Io(std::io::Error::new(
+                          std::io::ErrorKind::InvalidData,
+                          format!(
+                              "current directory is not valid UTF-8: {}",
+                              e.into_path_buf().display()
+                          ),
+                      ))
+                  })?;
+                  config::ConfigLoader::new(&self.app_name)
+                      .with_project_search(&cwd)
+                      .load::<C>()?
+              }
+              CfgSource::File(path) => config::ConfigLoader::new(&self.app_name)
+                  .with_user_config(false)
+                  .with_file(&path)
+                  .load::<C>()?,
+              CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
+          };
+
+          // Build layers
+          #[cfg(feature = "logging")]
+          let (log_layer, log_guard) = if do_logging {
+              let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
+              let (layer, guard) = logging::build_json_layer(&log_cfg)?;
+              (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
+          } else {
+              (None, None)
+          };
+
+          pub fn from_app_name(app_name: &str) -> Self {
+              let prefix = app_name.to_uppercase().replace('-', "_");
+              Self {
+                  service: app_name.to_string(),
+                  env_log_path: format!("{prefix}_LOG_PATH"),
+                  env_log_dir: format!("{prefix}_LOG_DIR"),
+                  log_dir: None,
+              }
+          }
+
+          /// Set the log directory from config.
+          pub fn with_log_dir(mut self, dir: Option<PathBuf>) -> Self {
+              self.log_dir = dir;
+        mechanism: >-
+          `ConfiguredBuilder::start` does load a typed config value, but the
+          logging path constructs `LoggingConfig` from only the app name and
+          leaves `log_dir` at `None`. There is no trait contract on `C` that
+          would let the builder read a config-provided log directory, and the
+          `with_log_dir` helper is never called. That makes any config-sourced
+          `log_dir` effectively dead when users rely on the builder API.
+        remediation: >-
+          Either add an explicit builder hook for the log directory so the typed
+          config can be projected into `LoggingConfig`, or remove the implicit
+          config-level promise and make log target selection entirely explicit.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 7
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [config-loader-discards-discovered-config-errors]
+        effort: medium
+        effort_notes: The fix is localized but it needs an explicit API for threading config state into logging setup.
+
+  - slug: startup-surface
+    title: The Startup Surface
+    thesis: Initialization paths return Result but still hide realistic panic edges at the tracing-global and runtime boundaries.
+    verdict: >-
+      Startup is disciplined where it touches file IO and config parsing, but
+      it stops being disciplined exactly where global side effects begin. Both
+      tracing initialization and shutdown registration can terminate the process
+      instead of producing a recoverable error, which is a bad contract for a
+      library whose public API already promises typed startup failures.
+    flow:
+      - id: start-entry
+        label: Builder.start()
+        type: start
+      - id: start-tracing
+        label: Init tracing
+        type: decision
+        no: start-tracing-panic
+        findings:
+          - slug: tracing-init-panics-instead-of-returning-error
+            label: duplicate init
+      - id: start-tracing-panic
+        label: Panic on init
+        type: end
+        spine: false
+        findings:
+          - slug: tracing-init-panics-instead-of-returning-error
+            label: panic path
+      - id: start-shutdown
+        label: Register signals
+        type: decision
+        no: start-runtime-panic
+        findings:
+          - slug: shutdown-startup-assumes-a-tokio-runtime
+            label: runtime needed
+      - id: start-runtime-panic
+        label: Panic without runtime
+        type: end
+        spine: false
+        findings:
+          - slug: shutdown-startup-assumes-a-tokio-runtime
+            label: no runtime
+      - id: start-end
+        label: Return App
+        type: end
+    findings:
+      - slug: tracing-init-panics-instead-of-returning-error
+        title: Logging startup panics when tracing was initialized earlier
+        concern: significant
+        locations:
+          - path: src/logging.rs
+            start_line: 103
+            end_line: 109
+          - path: src/lib.rs
+            start_line: 545
+            end_line: 552
+        evidence: |
+          pub fn init(cfg: &LoggingConfig, env_filter: EnvFilter) -> Result<LoggingGuard> {
+              let (log_layer, log_guard) = build_json_layer(cfg)?;
+
+              tracing_subscriber::registry()
+                  .with(env_filter)
+                  .with(log_layer)
+                  .init();
+
+          #[cfg(all(feature = "logging", not(feature = "otel")))]
+          if log_layer.is_some() {
+              let (quiet, verbose) = cli_flags;
+              let filter = logging::env_filter(quiet, verbose, "info");
+              tracing_subscriber::registry()
+                  .with(filter)
+                  .with(log_layer)
+                  .init();
+          }
+        mechanism: >-
+          Both public startup paths call `SubscriberInitExt::init()`, which
+          panics if a global default subscriber is already installed. The API
+          signature advertises recoverable failure through `Result`, but this
+          class of failure skips that contract entirely and turns any embedder,
+          integration test, or double-init path into a process abort.
+        remediation: >-
+          Use `try_init()` and map the duplicate-subscriber case into a typed
+          error variant so callers can decide whether to treat existing tracing
+          state as fatal, benign, or something to reuse.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 5
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [shutdown-startup-assumes-a-tokio-runtime]
+        effort: small
+        effort_notes: The failure point is localized to the tracing initialization call sites and the error enum.
+
+      - slug: shutdown-startup-assumes-a-tokio-runtime
+        title: Shutdown startup assumes an active Tokio runtime
+        concern: significant
+        locations:
+          - path: src/lib.rs
+            start_line: 572
+            end_line: 576
+          - path: src/shutdown.rs
+            start_line: 64
+            end_line: 87
+        evidence: |
+          #[cfg(feature = "shutdown")]
+          let shutdown_handle = if do_shutdown {
+              let handle = shutdown::ShutdownHandle::new();
+              handle.register_signals()?;
+              Some(handle)
+
+          pub fn register_signals(&self) -> crate::Result<()> {
+              #[cfg(unix)]
+              let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                  .map_err(|e| crate::Error::ShutdownInit(Box::new(e)))?;
+
+              let handle = self.clone();
+
+              tokio::spawn(async move {
+                  let ctrl_c = tokio::signal::ctrl_c();
+
+                  #[cfg(unix)]
+                  tokio::select! {
+                      _ = ctrl_c => {},
+                      _ = sigterm.recv() => {},
+                  }
+
+                  #[cfg(not(unix))]
+                  ctrl_c.await.ok();
+
+                  tracing::info!("shutdown signal received");
+                  handle.shutdown();
+              });
+
+              Ok(())
+          }
+        mechanism: >-
+          The builder always calls `register_signals()` during startup when the
+          shutdown feature is enabled, and `register_signals()` always uses
+          `tokio::spawn`. `tokio::spawn` panics when there is no active runtime,
+          so a synchronous `main()` can reach a panic even though the public
+          builder method returns `Result<App<C>>`. The only failure path that is
+          currently typed is signal registration itself; runtime availability is
+          left as an implicit panic precondition.
+        remediation: >-
+          Detect runtime availability with `tokio::runtime::Handle::try_current`
+          and return a typed startup error when no runtime exists, or accept an
+          explicit runtime handle from the caller instead of spawning
+          unconditionally.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 3
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [tracing-init-panics-instead-of-returning-error]
+        effort: small
+        effort_notes: The behavior is concentrated in one helper and one builder call site.
+
+  - slug: shutdown-surface
+    title: The Shutdown Surface
+    thesis: The shutdown primitives are simple and race-free, but one API path conflates channel teardown with a real shutdown signal.
+    verdict: >-
+      This surface is otherwise tight: no lock ordering problems, no unsafe
+      Send/Sync workarounds, and the async tests all pass. The remaining issue
+      is semantic rather than structural, but it matters because it changes the
+      meaning of `cancelled()` under sender-drop conditions.
+    flow:
+      - id: shut-start
+        label: cancelled()
+        type: start
+      - id: shut-flag
+        label: Flag true?
+        type: decision
+        no: shut-wait
+      - id: shut-wait
+        label: Wait on channel
+        type: decision
+        no: shut-drop
+        findings:
+          - slug: shutdown-token-treats-channel-close-as-cancelled
+            label: closure masked
+      - id: shut-drop
+        label: Sender dropped
+        type: process
+        spine: false
+        next: shut-end
+        findings:
+          - slug: shutdown-token-treats-channel-close-as-cancelled
+            label: false success
+      - id: shut-end
+        label: Return caller
+        type: end
+    findings:
+      - slug: shutdown-token-treats-channel-close-as-cancelled
+        title: ShutdownToken::cancelled returns on sender drop without a shutdown signal
+        concern: moderate
+        locations:
+          - path: src/shutdown.rs
+            start_line: 104
+            end_line: 111
+        evidence: |
+          /// Wait until shutdown is triggered.
+          ///
+          /// Resolves immediately if shutdown has already been triggered.
+          pub async fn cancelled(&mut self) {
+              if *self.receiver.borrow_and_update() {
+                  return;
+              }
+              self.receiver.changed().await.ok();
+          }
+        mechanism: >-
+          `watch::Receiver::changed()` returns an error when all senders are
+          dropped. Converting that result with `.ok()` suppresses the distinction
+          between "the shutdown flag became true" and "the channel disappeared",
+          so `cancelled()` can return as though shutdown happened when no sender
+          ever requested it.
+        remediation: >-
+          Preserve the distinction in the API by returning a status or Result,
+          or keep waiting until the observed value becomes `true` instead of
+          treating channel closure as success.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 3
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [shutdown-startup-assumes-a-tokio-runtime]
+        effort: small
+        effort_notes: The fix is localized to one async method and its contract.
+
+  - slug: supply-chain-surface
+    title: The Supply Chain Surface
+    thesis: The dependency set is current and RustSec-clean, but one direct dependency is dead weight.
+    verdict: >-
+      This surface is otherwise in good shape: `cargo audit` completed clean
+      after rerunning outside the sandbox, there is no unsafe code in the crate,
+      and the manifest is small. The remaining issue is simple hygiene: remove
+      the unused dependency or codify why it must stay.
+    flow:
+      - id: dep-start
+        label: Read manifest
+        type: start
+      - id: dep-check
+        label: Is anyhow used?
+        type: decision
+        no: dep-unused
+      - id: dep-unused
+        label: Unused dep kept
+        type: process
+        spine: false
+        next: dep-end
+        findings:
+          - slug: unused-anyhow-direct-dependency
+            label: dead dep
+      - id: dep-end
+        label: Keep or remove
+        type: end
+    findings:
+      - slug: unused-anyhow-direct-dependency
+        title: The cli feature carries an unused anyhow dependency
+        concern: advisory
+        locations:
+          - path: Cargo.toml
+            start_line: 35
+            end_line: 35
+          - path: Cargo.toml
+            start_line: 66
+            end_line: 66
+          - path: .crustoleum/machete.txt
+            start_line: 1
+            end_line: 6
+        evidence: |
+          anyhow = { version = "1.0", optional = true }
+          cli = ["dep:clap", "dep:owo-colors", "dep:anyhow"]
+
+          Analyzing dependencies of crates in this directory...
+          cargo-machete found the following unused dependencies in this directory:
+          rebar -- ./Cargo.toml:
+          	anyhow
+        mechanism: >-
+          The `cli` feature wires in `anyhow`, but the recorded dependency audit
+          flagged it as unused and the current source tree does not reference it.
+          Keeping a dead direct dependency expands the trusted set, compile
+          surface, and long-term maintenance burden without paying for itself.
+        remediation: >-
+          Remove `anyhow` from the manifest and from the `cli` feature, or
+          document and suppress it if it is intentionally reserved for an
+          imminent public API.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 3
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: This is a one-line manifest cleanup unless the dependency is being intentionally staged.
+
+summary:
+  counts:
+    critical: 0
+    significant: 3
+    moderate: 2
+    advisory: 1
+    note: 0

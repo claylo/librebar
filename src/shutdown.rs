@@ -62,13 +62,17 @@ impl ShutdownHandle {
     ///
     /// Returns an error if signal handler registration fails.
     pub fn register_signals(&self) -> crate::Result<()> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|e| crate::Error::NoRuntime(Box::new(e)))?;
+
         #[cfg(unix)]
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .map_err(|e| crate::Error::ShutdownInit(Box::new(e)))?;
 
         let handle = self.clone();
 
-        tokio::spawn(async move {
+        tracing::debug!("registering shutdown signal handlers");
+        runtime.spawn(async move {
             let ctrl_c = tokio::signal::ctrl_c();
 
             #[cfg(unix)]
@@ -104,11 +108,20 @@ impl ShutdownToken {
     /// Wait until shutdown is triggered.
     ///
     /// Resolves immediately if shutdown has already been triggered.
+    /// If the [`ShutdownHandle`] is dropped without triggering shutdown,
+    /// this future will remain pending (never resolves spuriously).
     pub async fn cancelled(&mut self) {
-        if *self.receiver.borrow_and_update() {
-            return;
+        loop {
+            if *self.receiver.borrow_and_update() {
+                return;
+            }
+            // If all senders dropped without setting true, the channel is
+            // dead — return pending forever rather than treating it as shutdown.
+            if self.receiver.changed().await.is_err() {
+                tracing::warn!("shutdown handle dropped without triggering shutdown");
+                std::future::pending::<()>().await;
+            }
         }
-        self.receiver.changed().await.ok();
     }
 
     /// Check if shutdown has been triggered (non-async).

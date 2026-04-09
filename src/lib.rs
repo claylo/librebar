@@ -157,6 +157,8 @@ pub fn init(app_name: &str) -> Builder {
         cli: None,
         #[cfg(feature = "logging")]
         enable_logging: false,
+        #[cfg(feature = "logging")]
+        log_dir: None,
         #[cfg(feature = "otel")]
         enable_otel: false,
         #[cfg(feature = "shutdown")]
@@ -176,6 +178,8 @@ pub struct Builder {
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
     enable_logging: bool,
+    #[cfg(feature = "logging")]
+    log_dir: Option<std::path::PathBuf>,
     #[cfg(feature = "otel")]
     enable_otel: bool,
     #[cfg(feature = "shutdown")]
@@ -196,6 +200,13 @@ impl Builder {
     #[cfg(feature = "logging")]
     pub const fn logging(mut self) -> Self {
         self.enable_logging = true;
+        self
+    }
+
+    /// Set the log directory explicitly.
+    #[cfg(feature = "logging")]
+    pub fn with_log_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.log_dir = Some(dir);
         self
     }
 
@@ -229,10 +240,17 @@ impl Builder {
     ///
     /// Returns an error if logging initialization fails.
     pub fn start(self) -> Result<App> {
+        // Capture flags before moving fields out of self
+        #[cfg(feature = "logging")]
+        let cli_flags = self.cli_flags();
+        #[cfg(feature = "logging")]
+        let do_logging = self.enable_logging;
+
         // Build layers
         #[cfg(feature = "logging")]
-        let (log_layer, log_guard) = if self.enable_logging {
-            let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
+        let (log_layer, log_guard) = if do_logging {
+            let log_cfg =
+                logging::LoggingConfig::from_app_name(&self.app_name).with_log_dir(self.log_dir);
             let (layer, guard) = logging::build_json_layer(&log_cfg)?;
             (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
         } else {
@@ -251,17 +269,18 @@ impl Builder {
         // Compose tracing subscriber
         #[cfg(all(feature = "logging", not(feature = "otel")))]
         if log_layer.is_some() {
-            let (quiet, verbose) = self.cli_flags();
+            let (quiet, verbose) = cli_flags;
             let filter = logging::env_filter(quiet, verbose, "info");
             tracing_subscriber::registry()
                 .with(filter)
                 .with(log_layer)
-                .init();
+                .try_init()
+                .map_err(|e| Error::TracingInit(Box::new(e)))?;
         }
 
         #[cfg(all(feature = "logging", feature = "otel"))]
         if log_layer.is_some() || otel_layer.is_some() {
-            let (quiet, verbose) = self.cli_flags();
+            let (quiet, verbose) = cli_flags;
             let filter = logging::env_filter(quiet, verbose, "info");
             let mut layers: Vec<
                 Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>,
@@ -273,7 +292,10 @@ impl Builder {
             if let Some(l) = otel_layer {
                 layers.push(l);
             }
-            tracing_subscriber::registry().with(layers).init();
+            tracing_subscriber::registry()
+                .with(layers)
+                .try_init()
+                .map_err(|e| Error::TracingInit(Box::new(e)))?;
         }
 
         #[cfg(feature = "shutdown")]
@@ -337,6 +359,8 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "logging")]
+            log_dir: self.log_dir,
             #[cfg(feature = "otel")]
             enable_otel: self.enable_otel,
             #[cfg(feature = "shutdown")]
@@ -360,6 +384,8 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "logging")]
+            log_dir: self.log_dir,
             #[cfg(feature = "otel")]
             enable_otel: self.enable_otel,
             #[cfg(feature = "shutdown")]
@@ -383,6 +409,8 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "logging")]
+            log_dir: self.log_dir,
             #[cfg(feature = "otel")]
             enable_otel: self.enable_otel,
             #[cfg(feature = "shutdown")]
@@ -419,6 +447,8 @@ pub struct ConfiguredBuilder<C> {
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
     enable_logging: bool,
+    #[cfg(feature = "logging")]
+    log_dir: Option<std::path::PathBuf>,
     #[cfg(feature = "otel")]
     enable_otel: bool,
     #[cfg(feature = "shutdown")]
@@ -441,6 +471,13 @@ impl<C> ConfiguredBuilder<C> {
     #[cfg(feature = "logging")]
     pub const fn logging(mut self) -> Self {
         self.enable_logging = true;
+        self
+    }
+
+    /// Set the log directory explicitly.
+    #[cfg(feature = "logging")]
+    pub fn with_log_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.log_dir = Some(dir);
         self
     }
 
@@ -525,7 +562,8 @@ where
         // Build layers
         #[cfg(feature = "logging")]
         let (log_layer, log_guard) = if do_logging {
-            let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
+            let log_cfg =
+                logging::LoggingConfig::from_app_name(&self.app_name).with_log_dir(self.log_dir);
             let (layer, guard) = logging::build_json_layer(&log_cfg)?;
             (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
         } else {
@@ -549,7 +587,8 @@ where
             tracing_subscriber::registry()
                 .with(filter)
                 .with(log_layer)
-                .init();
+                .try_init()
+                .map_err(|e| Error::TracingInit(Box::new(e)))?;
         }
 
         #[cfg(all(feature = "logging", feature = "otel"))]
@@ -566,7 +605,10 @@ where
             if let Some(l) = otel_layer {
                 layers.push(l);
             }
-            tracing_subscriber::registry().with(layers).init();
+            tracing_subscriber::registry()
+                .with(layers)
+                .try_init()
+                .map_err(|e| Error::TracingInit(Box::new(e)))?;
         }
 
         #[cfg(feature = "shutdown")]

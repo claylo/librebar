@@ -267,8 +267,9 @@ impl ConfigLoader {
         // User config (lowest precedence of file sources)
         if self.include_user_config
             && let Some(user_config) = self.find_user_config()
-            && let Ok(value) = parse_file(&user_config)
         {
+            tracing::debug!(path = %user_config, "discovered user config");
+            let value = parse_file(&user_config)?;
             deep_merge(&mut merged, value);
             sources.user_file = Some(user_config);
         }
@@ -276,14 +277,16 @@ impl ConfigLoader {
         // Project config
         if let Some(ref root) = self.project_search_root
             && let Some(project_config) = self.find_project_config(root)
-            && let Ok(value) = parse_file(&project_config)
         {
+            tracing::debug!(path = %project_config, "discovered project config");
+            let value = parse_file(&project_config)?;
             deep_merge(&mut merged, value);
             sources.project_file = Some(project_config);
         }
 
         // Explicit files (highest precedence)
         for file in &self.explicit_files {
+            tracing::debug!(path = %file, "loading explicit config");
             let value = parse_file(file)?;
             deep_merge(&mut merged, value);
         }

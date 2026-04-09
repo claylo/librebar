@@ -30,9 +30,17 @@ pub enum Error {
     #[error("failed to initialize OpenTelemetry: {0}")]
     OtelInit(Box<dyn std::error::Error + Send + Sync>),
 
+    /// Tracing global subscriber already set.
+    #[error("failed to initialize tracing subscriber: {0}")]
+    TracingInit(Box<dyn std::error::Error + Send + Sync>),
+
     /// Shutdown signal handler registration failed.
     #[error("failed to register shutdown handler: {0}")]
     ShutdownInit(Box<dyn std::error::Error + Send + Sync>),
+
+    /// No Tokio runtime available for async initialization.
+    #[error("no active Tokio runtime: {0}")]
+    NoRuntime(Box<dyn std::error::Error + Send + Sync>),
 
     /// I/O error during initialization.
     #[error(transparent)]

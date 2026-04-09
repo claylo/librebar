@@ -1,0 +1,326 @@
+---
+meta:
+  project: rebar
+  commit: 885e493cf5fcad7d8361d5a7e8cf4352480f8644
+  timestamp: 2026-04-08T21:10:00-04:00
+  scope: Full crate audit of library sources, manifest, generated tool output, and tests
+
+structure:
+  root: /Users/clay/source/claylo/rebar
+  total_files: 17
+  total_lines: 2949
+  languages:
+    - language: Rust
+      files: 17
+      lines: 2949
+      percentage: 100.0
+
+  modules:
+    - name: lib
+      path: src/lib.rs
+      files: 1
+      lines: 614
+      entry_points:
+        - name: init
+          path: src/lib.rs
+          line: 153
+          kind: public_fn
+        - name: Builder::start
+          path: src/lib.rs
+          line: 231
+          kind: public_fn
+        - name: ConfiguredBuilder::start
+          path: src/lib.rs
+          line: 491
+          kind: public_fn
+      dependencies:
+        - target: config
+          weight: 6
+        - target: logging
+          weight: 8
+        - target: otel
+          weight: 4
+        - target: shutdown
+          weight: 4
+        - target: crash
+          weight: 2
+        - target: cli
+          weight: 5
+    - name: config
+      path: src/config.rs
+      files: 1
+      lines: 402
+      entry_points:
+        - name: ConfigLoader::load
+          path: src/config.rs
+          line: 259
+          kind: public_fn
+        - name: ConfigLoader::load_or_error
+          path: src/config.rs
+          line: 303
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 5
+    - name: logging
+      path: src/logging.rs
+      files: 1
+      lines: 508
+      entry_points:
+        - name: init
+          path: src/logging.rs
+          line: 103
+          kind: public_fn
+        - name: resolve_log_target_with
+          path: src/logging.rs
+          line: 183
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 1
+    - name: shutdown
+      path: src/shutdown.rs
+      files: 1
+      lines: 118
+      entry_points:
+        - name: ShutdownHandle::register_signals
+          path: src/shutdown.rs
+          line: 64
+          kind: public_fn
+        - name: ShutdownToken::cancelled
+          path: src/shutdown.rs
+          line: 107
+          kind: public_fn
+      dependencies: []
+    - name: otel
+      path: src/otel.rs
+      files: 1
+      lines: 171
+      entry_points:
+        - name: build_otel_layer
+          path: src/otel.rs
+          line: 117
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 2
+    - name: cli
+      path: src/cli.rs
+      files: 1
+      lines: 111
+      entry_points:
+        - name: CommonArgs::apply_chdir
+          path: src/cli.rs
+          line: 86
+          kind: public_fn
+        - name: with_help_short
+          path: src/cli.rs
+          line: 102
+          kind: public_fn
+      dependencies: []
+    - name: crash
+      path: src/crash.rs
+      files: 1
+      lines: 221
+      entry_points:
+        - name: install
+          path: src/crash.rs
+          line: 74
+          kind: public_fn
+        - name: write_crash_dump_to
+          path: src/crash.rs
+          line: 116
+          kind: public_fn
+      dependencies: []
+    - name: mcp
+      path: src/mcp.rs
+      files: 1
+      lines: 29
+      entry_points:
+        - name: transport_stdio
+          path: src/mcp.rs
+          line: 27
+          kind: public_fn
+      dependencies: []
+    - name: tests
+      path: tests
+      files: 8
+      lines: 775
+      entry_points: []
+      dependencies:
+        - target: lib
+          weight: 8
+        - target: config
+          weight: 2
+        - target: logging
+          weight: 2
+        - target: shutdown
+          weight: 1
+        - target: otel
+          weight: 1
+        - target: crash
+          weight: 1
+
+dependencies:
+  manifest: Cargo.toml
+  items:
+    - name: serde
+      version: "1.0"
+      latest_version: "1.0.228"
+      kind: direct
+      notes: core dependency
+    - name: tracing
+      version: "0.1"
+      latest_version: "0.1.44"
+      kind: direct
+      notes: core dependency
+    - name: thiserror
+      version: "2.0"
+      latest_version: "2.0.18"
+      kind: direct
+      notes: core dependency
+    - name: clap
+      version: "4.6"
+      latest_version: "4.6.0"
+      kind: optional
+      notes: cli feature
+    - name: owo-colors
+      version: "4.3"
+      latest_version: "4.3.0"
+      kind: optional
+      notes: cli feature
+    - name: anyhow
+      version: "1.0"
+      latest_version: "1.0.102"
+      kind: optional
+      notes: flagged unused by cargo-machete
+    - name: toml
+      version: "0.8"
+      latest_version: "1.1.2+spec-1.1.0"
+      kind: optional
+      notes: config feature
+    - name: serde-saphyr
+      version: "0.0"
+      latest_version: "0.0.23"
+      kind: optional
+      notes: config feature
+    - name: serde_json
+      version: "1.0"
+      latest_version: "1.0.149"
+      kind: optional
+      notes: config and logging features; also dev-dependency
+    - name: camino
+      version: "1.2"
+      latest_version: "1.2.2"
+      kind: optional
+      notes: config feature
+    - name: directories
+      version: "6.0"
+      latest_version: "6.0.0"
+      kind: optional
+      notes: config and logging features
+    - name: tracing-subscriber
+      version: "0.3"
+      latest_version: "0.3.23"
+      kind: optional
+      notes: logging feature
+    - name: tracing-appender
+      version: "0.2"
+      latest_version: "0.2.4"
+      kind: optional
+      notes: logging feature
+    - name: tokio
+      version: "1.51"
+      latest_version: "1.51.1"
+      kind: optional
+      notes: shutdown, otel, and mcp features; also dev-dependency
+    - name: opentelemetry
+      version: "0.31"
+      latest_version: "0.31.0"
+      kind: optional
+      notes: otel feature
+    - name: opentelemetry_sdk
+      version: "0.31"
+      latest_version: "0.31.0"
+      kind: optional
+      notes: otel feature
+    - name: opentelemetry-otlp
+      version: "0.31"
+      latest_version: "0.31.1"
+      kind: optional
+      notes: otel feature
+    - name: tracing-opentelemetry
+      version: "0.32"
+      latest_version: "0.32.1"
+      kind: optional
+      notes: otel feature
+    - name: rmcp
+      version: "1.3"
+      latest_version: "1.3.0"
+      kind: optional
+      notes: mcp feature
+    - name: tempfile
+      version: "3.27"
+      latest_version: "3.27.0"
+      kind: dev
+      notes: test-only
+
+churn:
+  period: last 12 months
+  hotspots:
+    - path: src/lib.rs
+      commits: 7
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7]
+    - path: src/logging.rs
+      commits: 5
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]
+    - path: src/config.rs
+      commits: 3
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+    - path: src/shutdown.rs
+      commits: 3
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+    - path: Cargo.toml
+      commits: 3
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+
+  recent_activity:
+    total_commits: 11
+    active_authors: 1
+    files_changed: 17
+
+boundaries:
+  - name: cli_boundary
+    description: User-supplied CLI flags shape startup behavior, working directory, and logging verbosity.
+    modules: [cli, lib]
+    notes: CommonArgs is embedded into consumer CLIs and then fed into startup.
+  - name: config_boundary
+    description: Rebar deserializes untrusted TOML, YAML, and JSON from project and user config locations.
+    modules: [config, lib]
+    notes: Discovery walks parent directories and merges multiple files into typed config.
+  - name: filesystem_logging_boundary
+    description: Logging resolves writable directories from env vars, config, and platform defaults before opening files.
+    modules: [logging, lib]
+    notes: Logging can touch stderr, cwd, platform log dirs, and env-controlled paths.
+  - name: runtime_signal_boundary
+    description: Shutdown installs OS signal listeners and spawns tasks into Tokio.
+    modules: [shutdown, lib]
+    notes: This is the main async/runtime assumption in the crate.
+  - name: otel_network_boundary
+    description: Optional OTEL export sends spans to an external collector over HTTP or gRPC.
+    modules: [otel, lib]
+    notes: Endpoint and protocol selection come from environment variables.
+  - name: mcp_stdio_boundary
+    description: The MCP helper exposes stdin/stdout transport for protocol traffic.
+    modules: [mcp]
+    notes: This keeps protocol traffic off stdout for logging correctness.

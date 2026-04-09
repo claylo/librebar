@@ -106,7 +106,8 @@ pub fn init(cfg: &LoggingConfig, env_filter: EnvFilter) -> Result<LoggingGuard> 
     tracing_subscriber::registry()
         .with(env_filter)
         .with(log_layer)
-        .init();
+        .try_init()
+        .map_err(|e| crate::Error::TracingInit(Box::new(e)))?;
 
     tracing::debug!("logging initialized");
 
