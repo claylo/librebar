@@ -88,6 +88,8 @@ pub struct App<C = ()> {
     cli: cli::CommonArgs,
     #[cfg(feature = "shutdown")]
     shutdown_handle: Option<shutdown::ShutdownHandle>,
+    #[cfg(feature = "otel")]
+    _otel_guard: Option<otel::OtelGuard>,
     #[cfg(feature = "logging")]
     _logging_guard: Option<logging::LoggingGuard>,
 }
@@ -155,6 +157,8 @@ pub fn init(app_name: &str) -> Builder {
         cli: None,
         #[cfg(feature = "logging")]
         enable_logging: false,
+        #[cfg(feature = "otel")]
+        enable_otel: false,
         #[cfg(feature = "shutdown")]
         enable_shutdown: false,
         #[cfg(feature = "crash")]
@@ -172,6 +176,8 @@ pub struct Builder {
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
     enable_logging: bool,
+    #[cfg(feature = "otel")]
+    enable_otel: bool,
     #[cfg(feature = "shutdown")]
     enable_shutdown: bool,
     #[cfg(feature = "crash")]
@@ -190,6 +196,13 @@ impl Builder {
     #[cfg(feature = "logging")]
     pub const fn logging(mut self) -> Self {
         self.enable_logging = true;
+        self
+    }
+
+    /// Enable OpenTelemetry tracing export.
+    #[cfg(feature = "otel")]
+    pub const fn otel(mut self) -> Self {
+        self.enable_otel = true;
         self
     }
 
@@ -216,22 +229,52 @@ impl Builder {
     ///
     /// Returns an error if logging initialization fails.
     pub fn start(self) -> Result<App> {
+        // Build layers
         #[cfg(feature = "logging")]
-        let logging_guard = if self.enable_logging {
-            let (quiet, verbose) = self.cli_flags();
+        let (log_layer, log_guard) = if self.enable_logging {
             let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
-            let filter = logging::env_filter(quiet, verbose, "info");
-            let (log_layer, log_guard) = logging::build_json_layer(&log_cfg)?;
+            let (layer, guard) = logging::build_json_layer(&log_cfg)?;
+            (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
+        } else {
+            (None, None)
+        };
 
+        #[cfg(feature = "otel")]
+        let (otel_layer, otel_guard) = if self.enable_otel {
+            let otel_cfg =
+                otel::OtelConfig::from_app_name(&self.app_name, env!("CARGO_PKG_VERSION"));
+            otel::build_otel_layer(&otel_cfg)?
+        } else {
+            (None, None)
+        };
+
+        // Compose tracing subscriber
+        #[cfg(all(feature = "logging", not(feature = "otel")))]
+        if log_layer.is_some() {
+            let (quiet, verbose) = self.cli_flags();
+            let filter = logging::env_filter(quiet, verbose, "info");
             tracing_subscriber::registry()
                 .with(filter)
                 .with(log_layer)
                 .init();
+        }
 
-            Some(logging::LoggingGuard::from_guard(log_guard))
-        } else {
-            None
-        };
+        #[cfg(all(feature = "logging", feature = "otel"))]
+        if log_layer.is_some() || otel_layer.is_some() {
+            let (quiet, verbose) = self.cli_flags();
+            let filter = logging::env_filter(quiet, verbose, "info");
+            let mut layers: Vec<
+                Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>,
+            > = Vec::new();
+            layers.push(Box::new(filter));
+            if let Some(l) = log_layer {
+                layers.push(Box::new(l));
+            }
+            if let Some(l) = otel_layer {
+                layers.push(l);
+            }
+            tracing_subscriber::registry().with(layers).init();
+        }
 
         #[cfg(feature = "shutdown")]
         let shutdown_handle = if self.enable_shutdown {
@@ -256,8 +299,10 @@ impl Builder {
             cli: self.cli.unwrap_or_else(default_cli),
             #[cfg(feature = "shutdown")]
             shutdown_handle,
+            #[cfg(feature = "otel")]
+            _otel_guard: otel_guard,
             #[cfg(feature = "logging")]
-            _logging_guard: logging_guard,
+            _logging_guard: log_guard,
         })
     }
 
@@ -292,6 +337,8 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "otel")]
+            enable_otel: self.enable_otel,
             #[cfg(feature = "shutdown")]
             enable_shutdown: self.enable_shutdown,
             #[cfg(feature = "crash")]
@@ -313,6 +360,8 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "otel")]
+            enable_otel: self.enable_otel,
             #[cfg(feature = "shutdown")]
             enable_shutdown: self.enable_shutdown,
             #[cfg(feature = "crash")]
@@ -334,6 +383,8 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "otel")]
+            enable_otel: self.enable_otel,
             #[cfg(feature = "shutdown")]
             enable_shutdown: self.enable_shutdown,
             #[cfg(feature = "crash")]
@@ -368,6 +419,8 @@ pub struct ConfiguredBuilder<C> {
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
     enable_logging: bool,
+    #[cfg(feature = "otel")]
+    enable_otel: bool,
     #[cfg(feature = "shutdown")]
     enable_shutdown: bool,
     #[cfg(feature = "crash")]
@@ -388,6 +441,13 @@ impl<C> ConfiguredBuilder<C> {
     #[cfg(feature = "logging")]
     pub const fn logging(mut self) -> Self {
         self.enable_logging = true;
+        self
+    }
+
+    /// Enable OpenTelemetry tracing export.
+    #[cfg(feature = "otel")]
+    pub const fn otel(mut self) -> Self {
+        self.enable_otel = true;
         self
     }
 
@@ -434,6 +494,8 @@ where
         let cli_flags = self.cli_flags();
         #[cfg(feature = "logging")]
         let do_logging = self.enable_logging;
+        #[cfg(feature = "otel")]
+        let do_otel = self.enable_otel;
         #[cfg(feature = "shutdown")]
         let do_shutdown = self.enable_shutdown;
 
@@ -460,22 +522,52 @@ where
             CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
         };
 
+        // Build layers
         #[cfg(feature = "logging")]
-        let logging_guard = if do_logging {
-            let (quiet, verbose) = cli_flags;
+        let (log_layer, log_guard) = if do_logging {
             let log_cfg = logging::LoggingConfig::from_app_name(&self.app_name);
-            let filter = logging::env_filter(quiet, verbose, "info");
-            let (log_layer, log_guard) = logging::build_json_layer(&log_cfg)?;
+            let (layer, guard) = logging::build_json_layer(&log_cfg)?;
+            (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
+        } else {
+            (None, None)
+        };
 
+        #[cfg(feature = "otel")]
+        let (otel_layer, otel_guard) = if do_otel {
+            let otel_cfg =
+                otel::OtelConfig::from_app_name(&self.app_name, env!("CARGO_PKG_VERSION"));
+            otel::build_otel_layer(&otel_cfg)?
+        } else {
+            (None, None)
+        };
+
+        // Compose tracing subscriber
+        #[cfg(all(feature = "logging", not(feature = "otel")))]
+        if log_layer.is_some() {
+            let (quiet, verbose) = cli_flags;
+            let filter = logging::env_filter(quiet, verbose, "info");
             tracing_subscriber::registry()
                 .with(filter)
                 .with(log_layer)
                 .init();
+        }
 
-            Some(logging::LoggingGuard::from_guard(log_guard))
-        } else {
-            None
-        };
+        #[cfg(all(feature = "logging", feature = "otel"))]
+        if log_layer.is_some() || otel_layer.is_some() {
+            let (quiet, verbose) = cli_flags;
+            let filter = logging::env_filter(quiet, verbose, "info");
+            let mut layers: Vec<
+                Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>,
+            > = Vec::new();
+            layers.push(Box::new(filter));
+            if let Some(l) = log_layer {
+                layers.push(Box::new(l));
+            }
+            if let Some(l) = otel_layer {
+                layers.push(l);
+            }
+            tracing_subscriber::registry().with(layers).init();
+        }
 
         #[cfg(feature = "shutdown")]
         let shutdown_handle = if do_shutdown {
@@ -499,8 +591,10 @@ where
             cli: self.cli.unwrap_or_else(default_cli),
             #[cfg(feature = "shutdown")]
             shutdown_handle,
+            #[cfg(feature = "otel")]
+            _otel_guard: otel_guard,
             #[cfg(feature = "logging")]
-            _logging_guard: logging_guard,
+            _logging_guard: log_guard,
         })
     }
 }

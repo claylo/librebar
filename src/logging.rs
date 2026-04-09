@@ -94,7 +94,8 @@ impl LoggingGuard {
 ///
 /// This is the standalone escape hatch — it builds the JSON layer and
 /// initializes the global subscriber in one call. For composing multiple
-/// layers (e.g., logging + OTEL), use [`build_json_layer()`] instead.
+/// layers (e.g., logging + OTEL), the builder uses an internal layer
+/// construction function instead.
 ///
 /// # Errors
 ///
