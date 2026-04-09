@@ -1,0 +1,903 @@
+---
+audit_date: 2026-04-09
+scope: Full crate audit — src/, Cargo.toml, build configuration, dependency tree
+commit: f7a028c82848c1f80398059de89e5f2e43c29162
+assessment: >
+  rebar is a well-structured foundation crate with strong safety discipline
+  (#![deny(unsafe_code)], zero unsafe blocks, clean clippy). The most
+  actionable finding is opentelemetry-otlp pulling reqwest and its transitive
+  stack through default features — a single Cargo.toml change eliminates 50+
+  unnecessary crates. The error type design and logging hot-path allocations
+  are moderate concerns worth addressing as the library matures. The
+  concurrency and memory safety surfaces are clean.
+
+narratives:
+  - slug: supply-chain-surface
+    title: The Supply Chain Surface
+    thesis: >
+      Dependency choices are deliberate and well-gated, except opentelemetry-otlp
+      whose default features smuggle a redundant HTTP stack into the tree.
+    verdict: >
+      The otel feature is the only real supply chain concern. Fixing default-features
+      on one dependency eliminates reqwest + tower + tower-http and drops the
+      transitive count by ~50 crates. Everything else — the feature gating strategy,
+      the serde-saphyr-over-serde_yaml choice, the hyper-direct-over-reqwest
+      decision — is solid.
+
+    flow:
+      - id: consumer-enables-otel
+        label: Consumer enables otel feature
+        type: start
+      - id: cargo-resolves-deps
+        label: Cargo resolves otel deps
+        type: process
+      - id: otlp-default-features
+        label: opentelemetry-otlp defaults?
+        type: decision
+        no: clean-tree
+        findings:
+          - slug: otel-otlp-default-features
+            label: reqwest pulled
+      - id: reqwest-pulled
+        label: reqwest + tower stack enters tree
+        type: process
+        spine: false
+        findings:
+          - slug: otel-otlp-default-features
+      - id: clean-tree
+        label: Only hyper-client transport
+        type: process
+        spine: false
+      - id: build-complete
+        label: Feature compiled
+        type: end
+
+    findings:
+      - slug: otel-otlp-default-features
+        title: opentelemetry-otlp default features pull reqwest unnecessarily
+        concern: significant
+        locations:
+          - path: Cargo.toml
+            start_line: 53
+            end_line: 53
+        evidence: |
+          opentelemetry-otlp = { version = "0.31", features = ["http-proto", "hyper-client"], optional = true }
+        evidence_lang: toml
+        evidence_markers:
+          - lines: "1"
+            type: del
+            label: "missing default-features = false"
+        mechanism: |
+          The opentelemetry-otlp crate's default features include
+          reqwest-blocking-client, logs, metrics, and internal-logs. Since
+          default-features is not set to false, enabling the otel feature
+          pulls in reqwest, tower, tower-http, and their transitive
+          dependencies — roughly 50 additional crates. This creates a
+          redundant HTTP stack alongside rebar's own hyper-based client,
+          and reqwest is a dependency the author explicitly avoids.
+        remediation: |
+          Add `default-features = false` and include `trace` explicitly:
+          ```toml
+          opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "hyper-client", "trace"], optional = true }
+          ```
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 3
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: Single-line Cargo.toml change, then verify otel tests still pass.
+
+      - slug: http-feature-missing-serde-json
+        title: HTTP feature omits serde_json despite JSON being the primary response format
+        concern: moderate
+        locations:
+          - path: Cargo.toml
+            start_line: 100
+            end_line: 100
+          - path: src/http.rs
+            start_line: 166
+            end_line: 185
+          - path: src/update.rs
+            start_line: 121
+            end_line: 122
+        evidence: |
+          http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio"]
+        evidence_lang: toml
+        evidence_markers:
+          - lines: "1"
+            type: del
+            label: "no dep:serde_json"
+        mechanism: |
+          The http feature provides an HTTP client with Response::text() and
+          Response::bytes(), but no JSON deserialization. serde_json is not
+          in the http feature's dependency list. The crate's own update
+          module demonstrates the gap: it enables http and immediately
+          needs serde_json to parse the GitHub API response, requiring
+          update to add dep:serde_json explicitly. Any consumer using the
+          http feature for API calls — which is the overwhelmingly common
+          case — will hit the same gap.
+        remediation: |
+          Add dep:serde_json to the http feature and add a json() method
+          to Response:
+          ```rust
+          pub fn json<T: serde::de::DeserializeOwned>(&self) -> crate::Result<T> {
+              serde_json::from_slice(&self.body)
+                  .map_err(|e| crate::Error::Http(Box::new(e)))
+          }
+          ```
+          This eliminates the text().ok()? -> from_str() two-step in
+          update.rs and any downstream consumer.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 3
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [response-text-body-clone, update-ok-chain-context-loss]
+        effort: small
+        effort_notes: >
+          Add dep:serde_json to http feature, add json() method to Response
+          (~8 lines), simplify update.rs to use it.
+
+      - slug: deny-toml-stale-comment
+        title: deny.toml references wrong project name
+        concern: note
+        locations:
+          - path: .config/deny.toml
+            start_line: 1
+            end_line: 1
+        evidence: |
+          # Security policy configuration for ah-ah-ah
+        evidence_lang: toml
+        evidence_markers:
+          - lines: "1"
+            type: mark
+            label: "should say rebar"
+        mechanism: |
+          The deny.toml header comment references "ah-ah-ah" instead of
+          "rebar." This was likely copied from another project and not
+          updated. Cosmetic, but could confuse contributors reviewing
+          the security policy.
+        remediation: |
+          Change the comment to reference rebar.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 1
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,1]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: One-word change.
+
+  - slug: error-handling-surface
+    title: The Error Handling Surface
+    thesis: >
+      Error propagation is consistent and panic-free, but the error type
+      architecture erases concrete causes behind Box<dyn Error>, and several
+      silent discards lack documentation of intent.
+    verdict: >
+      The crate has zero unwrap(), zero panic!, and disciplined ? propagation
+      throughout — a strong baseline for a library. The three concerns are
+      structural: the error enum's type erasure limits programmatic error
+      handling, the undocumented let _ = discards create a maintenance trap
+      (especially in the logging layer), and deep_merge's unbounded recursion
+      is a theoretical stack-overflow path. None are urgent for 0.1.0 but all
+      three should be addressed before 1.0.
+
+    flow:
+      - id: operation-fails
+        label: Operation fails
+        type: start
+      - id: error-created
+        label: Error variant created
+        type: process
+        findings:
+          - slug: error-type-erasure
+            label: source erased
+      - id: caller-matches
+        label: Caller matches variant?
+        type: decision
+        no: needs-downcast
+      - id: acts-on-error
+        label: Caller handles error
+        type: end
+      - id: needs-downcast
+        label: Caller must downcast Box
+        type: process
+        spine: false
+        findings:
+          - slug: error-type-erasure
+
+    findings:
+      - slug: error-type-erasure
+        title: Error variants erase concrete source types behind Box<dyn Error>
+        concern: moderate
+        locations:
+          - path: src/error.rs
+            start_line: 7
+            end_line: 72
+        evidence: |
+          #[derive(Error, Debug)]
+          pub enum Error {
+              #[error("failed to parse config file {path}: {source}")]
+              ConfigParse {
+                  path: String,
+                  source: Box<dyn std::error::Error + Send + Sync>,
+              },
+
+              #[error("failed to deserialize config: {0}")]
+              ConfigDeserialize(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("no configuration file found")]
+              ConfigNotFound,
+
+              #[error("no writable log directory found")]
+              LogDirNotWritable,
+
+              #[error("failed to initialize OpenTelemetry: {0}")]
+              OtelInit(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("failed to initialize tracing subscriber: {0}")]
+              TracingInit(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("failed to register shutdown handler: {0}")]
+              ShutdownInit(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("no active Tokio runtime: {0}")]
+              NoRuntime(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("failed to acquire lock: {0}")]
+              Lock(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("HTTP error: {0}")]
+              Http(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("cache error: {0}")]
+              Cache(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("update check error: {0}")]
+              Update(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("dispatch error: {0}")]
+              Dispatch(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error("diagnostic error: {0}")]
+              Diagnostic(Box<dyn std::error::Error + Send + Sync>),
+
+              #[error(transparent)]
+              Io(#[from] std::io::Error),
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "10"
+            type: del
+            label: "Box<dyn Error> erases source"
+          - lines: "37"
+            type: del
+            label: "e.g. Http — timeout? TLS? DNS?"
+        mechanism: |
+          Eleven of thirteen Error variants wrap Box<dyn Error + Send + Sync>,
+          fully erasing the concrete error type. A caller who catches
+          Error::Http cannot programmatically distinguish a timeout from a
+          TLS failure from a DNS error without string-matching the Display
+          output. For a foundation library, this limits downstream error
+          handling — consumers cannot implement retry-on-timeout or
+          report-on-TLS-mismatch without fragile text parsing.
+        remediation: |
+          For the most actionable variants (Http, Cache), introduce per-module
+          error enums with concrete variants (e.g., HttpError::Timeout,
+          HttpError::Tls, HttpError::InvalidUrl). Wrap them in the top-level
+          Error via #[error(transparent)] / #[from]. Init-time errors
+          (OtelInit, TracingInit, ShutdownInit) are reasonable as Box<dyn Error>
+          since callers rarely inspect those.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 5
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,5]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [update-ok-chain-context-loss]
+        effort: medium
+        effort_notes: >
+          Requires defining HttpError/CacheError enums, updating map_err
+          sites, and adjusting the top-level Error. Callers using Error::Http
+          with ? are unaffected.
+
+      - slug: silent-error-discards
+        title: Five let _ = discards lack intent documentation
+        concern: moderate
+        locations:
+          - path: src/logging.rs
+            start_line: 448
+            end_line: 448
+          - path: src/shutdown.rs
+            start_line: 41
+            end_line: 41
+          - path: src/cache.rs
+            start_line: 114
+            end_line: 114
+          - path: src/cache.rs
+            start_line: 152
+            end_line: 152
+          - path: src/update.rs
+            start_line: 129
+            end_line: 129
+        evidence: |
+          let _ = writer.write_all(&buf);
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1"
+            type: del
+            label: "logging.rs:448 — lost log lines"
+        mechanism: |
+          Five sites use `let _ =` to discard Results without commenting on
+          why the error is acceptable. The most concerning is logging.rs:448
+          where a write failure in the JSON log layer silently drops log
+          lines with no fallback. In a tracing Layer callback, returning an
+          error is not possible, but an eprintln! fallback would surface the
+          problem. The other four (shutdown send, cache cleanup, cache write,
+          update cache) are defensible best-effort patterns but their intent
+          is not documented.
+        remediation: |
+          Add a one-line comment above each `let _ =` explaining why the
+          discard is acceptable. For logging.rs:448, consider an eprintln!
+          fallback on write failure so lost log lines are not completely
+          invisible.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 6
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,6]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: Comments only. Eprintln fallback in logging.rs is one extra line.
+
+      - slug: deep-merge-no-depth-limit
+        title: Recursive deep_merge has no depth bound
+        concern: advisory
+        locations:
+          - path: src/config.rs
+            start_line: 111
+            end_line: 120
+        evidence: |
+          pub fn deep_merge(base: &mut Value, overlay: Value) {
+              match (base, overlay) {
+                  (Value::Object(base_map), Value::Object(overlay_map)) => {
+                      for (key, value) in overlay_map {
+                          deep_merge(base_map.entry(key).or_insert(Value::Null), value);
+                      }
+                  }
+                  (base, overlay) => *base = overlay,
+              }
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "5"
+            type: mark
+            label: "unbounded recursion"
+        mechanism: |
+          deep_merge is a public function that recurses to the depth of the
+          overlay's nesting. Config files are typically shallow (<5 levels),
+          but a pathologically nested YAML/JSON file could exhaust the stack.
+          The attack surface is local-only (the user controls which files are
+          loaded), which limits the practical risk.
+        remediation: |
+          Add a depth counter parameter or an internal helper with a max depth
+          (64 levels is generous for any config format). Return an error if
+          exceeded. Alternatively, document the stack-depth assumption.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 4
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,4]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: Add a depth parameter and early return. ~10 lines changed.
+
+      - slug: update-ok-chain-context-loss
+        title: Update check silently drops parse errors without logging
+        concern: advisory
+        locations:
+          - path: src/update.rs
+            start_line: 121
+            end_line: 125
+        evidence: |
+          let body = resp.text().ok()?;
+          let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+          let tag = json.get("tag_name")?.as_str()?;
+          let latest = tag.strip_prefix('v').unwrap_or(tag);
+          let html_url = json.get("html_url")?.as_str().unwrap_or("");
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-2"
+            type: mark
+            label: ".ok()? drops error context"
+        mechanism: |
+          Lines 121-122 use .ok()? to convert typed errors (UTF-8 decode,
+          JSON parse) into None, discarding the error. The HTTP request
+          failure on line 108 correctly logs at debug level before returning
+          None, but these parse failures do not. If the GitHub API changes
+          its response format, update checks will silently return "no update"
+          with no diagnostic trail.
+        remediation: |
+          Add tracing::debug! before the .ok()? on lines 121 and 122,
+          consistent with the pattern already used on line 111 for HTTP
+          errors.
+        temporal:
+          introduced: 2026-04-09
+          last_modified: 2026-04-09
+          commit_count: 3
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [error-type-erasure]
+        effort: trivial
+        effort_notes: Two tracing::debug! lines.
+
+  - slug: performance-surface
+    title: The Performance Surface
+    thesis: >
+      The logging hot path allocates several Strings per event that could be
+      avoided, and Response::text() clones the body unnecessarily in the
+      common case.
+    verdict: >
+      For a foundation library, the performance characteristics are appropriate.
+      The logging allocations happen in the non-blocking writer thread (not
+      the caller's hot path), which significantly reduces their impact. The
+      Response::text() clone and the level-string allocation are the most
+      actionable low-hanging fruit. The span fields clone is structurally
+      necessary given the tracing API but could use Arc if profiling ever
+      shows it matters.
+
+    flow:
+      - id: tracing-event
+        label: tracing event fires
+        type: start
+      - id: on-event-called
+        label: on_event called
+        type: process
+      - id: build-json-map
+        label: Build Map + allocate keys
+        type: process
+        findings:
+          - slug: logging-hot-path-allocations
+            label: per-event allocs
+      - id: clone-span-fields
+        label: Clone span fields
+        type: process
+        findings:
+          - slug: span-fields-clone
+            label: Map clone per span
+      - id: serialize-write
+        label: Serialize + write
+        type: process
+      - id: nonblocking-flush
+        label: Non-blocking flush
+        type: end
+
+    findings:
+      - slug: logging-hot-path-allocations
+        title: Per-event String allocations in JSON log layer
+        concern: moderate
+        locations:
+          - path: src/logging.rs
+            start_line: 419
+            end_line: 450
+        evidence: |
+          fn on_event(&self, event: &Event<'_>, ctx: LayerContext<'_, S>) {
+              let mut map = Map::new();
+
+              let timestamp = format_timestamp();
+              map.insert("timestamp".to_string(), Value::String(timestamp));
+              map.insert(
+                  "level".to_string(),
+                  Value::String(event.metadata().level().as_str().to_lowercase()),
+              );
+              map.insert(
+                  "target".to_string(),
+                  Value::String(event.metadata().target().to_string()),
+              );
+
+              if let Some(scope) = ctx.event_scope(event) {
+                  for span in scope.from_root() {
+                      if let Some(fields) = span.extensions().get::<SpanFields>() {
+                          map.extend(fields.values.clone());
+                      }
+                  }
+              }
+
+              let mut visitor = JsonVisitor::default();
+              event.record(&mut visitor);
+              map.extend(visitor.values);
+
+              if let Ok(mut buf) = serde_json::to_vec(&Value::Object(map)) {
+                  buf.push(b'\n');
+                  let mut writer = self.writer.make_writer();
+                  let _ = writer.write_all(&buf);
+              }
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "5"
+            type: mark
+            label: "\"timestamp\".to_string() — static key"
+          - lines: "8"
+            type: del
+            label: "to_lowercase() allocates per event"
+          - lines: "11"
+            type: mark
+            label: "\"target\".to_string() — static key"
+        mechanism: |
+          Every tracing event triggers: (1) three .to_string() calls for
+          static keys ("timestamp", "level", "target"), (2) a .to_lowercase()
+          allocation for the level string despite only 5 possible values,
+          (3) a .to_string() for the target module path, (4) serde_json::to_vec
+          for the output buffer. The level to_lowercase() is the most
+          avoidable — a match returning &'static str eliminates both the
+          allocation and the Unicode scan. The non-blocking writer means
+          these run off the application thread, reducing direct impact.
+        remediation: |
+          Replace the level formatting with a match:
+          ```rust
+          let level = match *event.metadata().level() {
+              Level::TRACE => "trace",
+              Level::DEBUG => "debug",
+              Level::INFO => "info",
+              Level::WARN => "warn",
+              Level::ERROR => "error",
+          };
+          ```
+          The static key allocations require serde_json::Map's String keys,
+          so eliminating them would need a direct-to-buffer JSON writer —
+          a larger refactor.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 6
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,6]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [span-fields-clone, silent-error-discards]
+        effort: small
+        effort_notes: Level match is trivial. Static key elimination is medium (buffer refactor).
+
+      - slug: response-text-body-clone
+        title: Response::text() clones body with no borrowing alternative
+        concern: advisory
+        locations:
+          - path: src/http.rs
+            start_line: 172
+            end_line: 174
+        evidence: |
+          pub fn text(&self) -> std::result::Result<String, std::string::FromUtf8Error> {
+              String::from_utf8(self.body.clone())
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "2"
+            type: del
+            label: "clone() copies entire body"
+        mechanism: |
+          text() takes &self and must clone the body Vec<u8> to pass
+          ownership to String::from_utf8. For typical API responses (a few
+          KB), this is fine. For larger responses, it doubles memory usage.
+          The common call site (update.rs:121) uses resp.text().ok()? then
+          discards the Response — a consuming variant would avoid the copy.
+        remediation: |
+          Add `fn into_text(self) -> Result<String, FromUtf8Error>` that
+          consumes self without cloning, and optionally
+          `fn text_ref(&self) -> Result<&str, std::str::Utf8Error>` for
+          zero-copy reads. Keep text(&self) for backward compatibility.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 3
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: Two additional methods, ~6 lines each.
+
+      - slug: span-fields-clone
+        title: Span field map cloned per event in logging layer
+        concern: advisory
+        locations:
+          - path: src/logging.rs
+            start_line: 433
+            end_line: 438
+        evidence: |
+          if let Some(scope) = ctx.event_scope(event) {
+              for span in scope.from_root() {
+                  if let Some(fields) = span.extensions().get::<SpanFields>() {
+                      map.extend(fields.values.clone());
+                  }
+              }
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "4"
+            type: mark
+            label: "Map clone per span per event"
+        mechanism: |
+          Each event clones the Map<String, Value> from every span in scope.
+          The tracing extensions API provides only shared references, so the
+          clone is structurally necessary. For shallow span hierarchies with
+          few fields, the cost is small. For deep instrumented stacks with
+          many fields, it scales linearly.
+        remediation: |
+          If profiling shows this is a bottleneck, store span fields as
+          Arc<Map<String, Value>> and clone the Arc (~15ns) instead of the
+          map contents. This requires changing SpanFields and on_record to
+          use Arc::make_mut. Not urgent without profiling data.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 6
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,6]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [logging-hot-path-allocations]
+        effort: medium
+        effort_notes: Arc refactor touches SpanFields, on_new_span, on_record, on_event.
+
+  - slug: api-design-surface
+    title: The API Design Surface
+    thesis: >
+      The type-state builder pattern is well-conceived but carries ~130 lines
+      of duplicated methods, and several public types are missing standard
+      trait implementations.
+    verdict: >
+      The API is ergonomic and follows Rust conventions — references where
+      appropriate, owned types at storage boundaries, no gratuitous lifetime
+      annotations. The builder duplication and missing Debug derives are the
+      main maintenance risks. The infallible Result returns on DebugBundle
+      are a minor API honesty issue. All of these are addressable without
+      breaking changes.
+
+    findings:
+      - slug: builder-method-duplication
+        title: Builder and ConfiguredBuilder duplicate ~130 lines of identical methods
+        concern: advisory
+        locations:
+          - path: src/lib.rs
+            start_line: 300
+            end_line: 462
+          - path: src/lib.rs
+            start_line: 586
+            end_line: 648
+        evidence: |
+          impl Builder {
+              #[cfg(feature = "cli")]
+              pub fn with_cli(mut self, common: cli::CommonArgs) -> Self {
+                  self.cli = Some(common);
+                  self
+              }
+
+              #[cfg(feature = "logging")]
+              pub const fn logging(mut self) -> Self {
+                  self.enable_logging = true;
+                  self
+              }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-12"
+            type: mark
+            label: "repeated identically in ConfiguredBuilder"
+        mechanism: |
+          Eight methods (with_cli, logging, with_log_dir, otel, shutdown,
+          crash_handler, with_version, cli_flags x2) are duplicated verbatim
+          between Builder and ConfiguredBuilder<C>. Additionally, the start()
+          methods share ~50 lines of identical tracing-subscriber composition
+          logic. Changes to init behavior must be made in two places, creating
+          divergence risk.
+        remediation: |
+          Extract common fields into a BuilderInner struct and delegate the
+          shared methods, or use a macro_rules! to generate them. The start()
+          methods' shared tail (subscriber composition, shutdown registration,
+          crash handler) can be extracted into a private init_subsystems()
+          function.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 13
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,13]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: medium
+        effort_notes: >
+          Structural refactor touching Builder, ConfiguredBuilder, and their
+          impls. No public API change.
+
+      - slug: missing-debug-derives
+        title: Multiple public types missing Debug derive
+        concern: advisory
+        locations:
+          - path: src/http.rs
+            start_line: 31
+            end_line: 36
+          - path: src/cache.rs
+            start_line: 35
+            end_line: 37
+          - path: src/update.rs
+            start_line: 44
+            end_line: 49
+          - path: src/diagnostics.rs
+            start_line: 190
+            end_line: 194
+        evidence: |
+          pub struct HttpClientConfig {
+              pub user_agent: String,
+              pub timeout: Duration,
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1"
+            type: mark
+            label: "no #[derive(Debug)]"
+        mechanism: |
+          HttpClientConfig, Cache, UpdateChecker, and DebugBundle are public
+          types with all-Debug fields but no Debug derive. The Rust API
+          Guidelines recommend Debug on all public types. App<C>, Builder,
+          and ConfiguredBuilder<C> also lack Debug, though those would need
+          a C: Debug bound. Without Debug, consumers cannot use {:?} for
+          diagnostics or include these types in debug output.
+        remediation: |
+          Add #[derive(Debug)] to HttpClientConfig, Cache, UpdateChecker,
+          and DebugBundle. For App<C>, Builder, and ConfiguredBuilder<C>,
+          add Debug with appropriate bounds or manual impls.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 3
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: Add derive attributes. ~10 lines across 4 files.
+
+      - slug: infallible-result-return
+        title: DebugBundle::add_text/add_bytes return Result but cannot fail
+        concern: note
+        locations:
+          - path: src/diagnostics.rs
+            start_line: 209
+            end_line: 218
+        evidence: |
+          pub fn add_text(&mut self, name: &str, content: &str) -> Result<()> {
+              self.files
+                  .push((name.to_string(), content.as_bytes().to_vec()));
+              Ok(())
+          }
+
+          pub fn add_bytes(&mut self, name: &str, data: &[u8]) -> Result<()> {
+              self.files.push((name.to_string(), data.to_vec()));
+              Ok(())
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1"
+            type: mark
+            label: "Result<()> but body is infallible"
+        mechanism: |
+          Both methods push to a Vec and return Ok(()) unconditionally. The
+          Result return type forces callers to handle a ? that can never
+          trigger, and signals that the operation may fail when it cannot.
+        remediation: |
+          Change return type to &mut Self for builder-style chaining, or
+          simply return (). Reserve Result for finish() which does actual I/O.
+        temporal:
+          introduced: 2026-04-09
+          last_modified: 2026-04-09
+          commit_count: 2
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,2]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: Change two return types and remove Ok(()) wrappers.
+
+      - slug: doctor-check-not-send
+        title: DoctorCheck trait lacks Send bound
+        concern: advisory
+        locations:
+          - path: src/diagnostics.rs
+            start_line: 35
+            end_line: 43
+        evidence: |
+          pub trait DoctorCheck {
+              fn name(&self) -> &str;
+              fn category(&self) -> &str;
+              fn run(&self) -> CheckResult;
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1"
+            type: mark
+            label: "no Send supertrait"
+        mechanism: |
+          DoctorCheck has no Send bound, which means DoctorRunner (holding
+          Vec<Box<dyn DoctorCheck>>) is !Send if any registered check is
+          !Send. This prevents passing the runner across thread boundaries or
+          using it in async contexts. For the current synchronous design this
+          is fine, but it closes the door on parallel check execution.
+        remediation: |
+          Add Send as a supertrait: `pub trait DoctorCheck: Send`. This is a
+          breaking change for any downstream !Send implementations, so
+          evaluate whether any exist before the 1.0 boundary.
+        temporal:
+          introduced: 2026-04-09
+          last_modified: 2026-04-09
+          commit_count: 2
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,2]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: trivial
+        effort_notes: One-word addition to trait definition.
+
+  - slug: memory-safety-surface
+    title: The Memory Safety Surface
+    thesis: >
+      The crate denies unsafe code at the root level, uses no raw pointers,
+      no MaybeUninit, no manual memory management, and all Drop
+      implementations are correct.
+    verdict: >
+      Clean. The #![deny(unsafe_code)] directive provides a compile-time
+      guarantee. All Box usage is for trait objects (required), all Vec
+      instances are bounded and short-lived, and the three Drop
+      implementations (OtelGuard, LockGuard, LoggingGuard) correctly
+      manage their resources without panicking.
+
+    findings: []
+
+  - slug: concurrency-surface
+    title: The Concurrency Surface
+    thesis: >
+      Async code is minimal, well-bounded, and uses appropriate primitives
+      with no shared mutable state across module boundaries.
+    verdict: >
+      Clean. No std::sync::Mutex, no Arc, no unsafe impl Send/Sync, no
+      lock-across-await patterns. The shutdown watch channel is sound and
+      idempotent. The HTTP timeout correctly covers the full request
+      lifecycle. The only minor note is synchronous filesystem I/O in
+      cache.rs called from the async update::check(), which is acceptable
+      for a startup-time operation.
+
+    findings: []
+
+summary:
+  counts:
+    critical: 0
+    significant: 1
+    moderate: 4
+    advisory: 6
+    note: 2

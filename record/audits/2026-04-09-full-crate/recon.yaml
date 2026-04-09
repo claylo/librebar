@@ -1,0 +1,476 @@
+---
+meta:
+  project: rebar
+  commit: f7a028c82848c1f80398059de89e5f2e43c29162
+  timestamp: 2026-04-09T13:27:00Z
+  scope: Full crate audit — src/, Cargo.toml, build configuration, dependency tree
+
+structure:
+  root: /Users/clay/source/claylo/rebar
+  total_files: 32
+  total_lines: 4601
+  languages:
+    - language: Rust
+      files: 32
+      lines: 4601
+      percentage: 100.0
+
+  modules:
+    - name: core
+      path: src/lib.rs
+      files: 2
+      lines: 867
+      entry_points:
+        - name: init
+          path: src/lib.rs
+          line: 260
+          kind: public_fn
+        - name: Builder::start
+          path: src/lib.rs
+          line: 359
+          kind: public_fn
+        - name: ConfiguredBuilder::start
+          path: src/lib.rs
+          line: 660
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 1
+        - target: cli
+          weight: 2
+        - target: config
+          weight: 3
+        - target: logging
+          weight: 3
+        - target: otel
+          weight: 2
+        - target: shutdown
+          weight: 2
+        - target: crash
+          weight: 1
+
+    - name: error
+      path: src/error.rs
+      files: 1
+      lines: 75
+      entry_points:
+        - name: Error
+          path: src/error.rs
+          line: 7
+          kind: exported_symbol
+      dependencies: []
+
+    - name: cli
+      path: src/cli.rs
+      files: 1
+      lines: 111
+      entry_points:
+        - name: CommonArgs
+          path: src/cli.rs
+          line: 48
+          kind: exported_symbol
+        - name: with_help_short
+          path: src/cli.rs
+          line: 102
+          kind: public_fn
+      dependencies: []
+
+    - name: config
+      path: src/config.rs
+      files: 1
+      lines: 405
+      entry_points:
+        - name: ConfigLoader::load
+          path: src/config.rs
+          line: 259
+          kind: public_fn
+        - name: deep_merge
+          path: src/config.rs
+          line: 111
+          kind: public_fn
+        - name: parse_file
+          path: src/config.rs
+          line: 166
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 3
+
+    - name: logging
+      path: src/logging.rs
+      files: 1
+      lines: 509
+      entry_points:
+        - name: init
+          path: src/logging.rs
+          line: 103
+          kind: public_fn
+        - name: env_filter
+          path: src/logging.rs
+          line: 150
+          kind: public_fn
+        - name: resolve_log_target_with
+          path: src/logging.rs
+          line: 184
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 2
+
+    - name: shutdown
+      path: src/shutdown.rs
+      files: 1
+      lines: 131
+      entry_points:
+        - name: ShutdownHandle::new
+          path: src/shutdown.rs
+          line: 32
+          kind: public_fn
+        - name: ShutdownToken::cancelled
+          path: src/shutdown.rs
+          line: 113
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 1
+
+    - name: crash
+      path: src/crash.rs
+      files: 1
+      lines: 221
+      entry_points:
+        - name: install
+          path: src/crash.rs
+          line: 74
+          kind: public_fn
+        - name: write_crash_dump_to
+          path: src/crash.rs
+          line: 116
+          kind: public_fn
+      dependencies: []
+
+    - name: http
+      path: src/http.rs
+      files: 1
+      lines: 185
+      entry_points:
+        - name: HttpClient::new
+          path: src/http.rs
+          line: 79
+          kind: public_fn
+        - name: HttpClient::get
+          path: src/http.rs
+          line: 105
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 4
+
+    - name: cache
+      path: src/cache.rs
+      files: 1
+      lines: 178
+      entry_points:
+        - name: Cache::set
+          path: src/cache.rs
+          line: 68
+          kind: public_fn
+        - name: Cache::get
+          path: src/cache.rs
+          line: 96
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 4
+
+    - name: update
+      path: src/update.rs
+      files: 1
+      lines: 175
+      entry_points:
+        - name: UpdateChecker::check
+          path: src/update.rs
+          line: 88
+          kind: public_fn
+      dependencies:
+        - target: http
+          weight: 1
+        - target: cache
+          weight: 2
+
+    - name: lockfile
+      path: src/lockfile.rs
+      files: 1
+      lines: 149
+      entry_points:
+        - name: Lockfile::try_acquire
+          path: src/lockfile.rs
+          line: 97
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 2
+
+    - name: dispatch
+      path: src/dispatch.rs
+      files: 1
+      lines: 70
+      entry_points:
+        - name: run
+          path: src/dispatch.rs
+          line: 47
+          kind: public_fn
+        - name: resolve
+          path: src/dispatch.rs
+          line: 32
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 1
+
+    - name: diagnostics
+      path: src/diagnostics.rs
+      files: 1
+      lines: 262
+      entry_points:
+        - name: DoctorRunner::run_all
+          path: src/diagnostics.rs
+          line: 117
+          kind: public_fn
+        - name: DebugBundle::finish
+          path: src/diagnostics.rs
+          line: 228
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 2
+
+    - name: otel
+      path: src/otel.rs
+      files: 1
+      lines: 171
+      entry_points:
+        - name: build_otel_layer
+          path: src/otel.rs
+          line: 117
+          kind: public_fn
+      dependencies:
+        - target: error
+          weight: 2
+
+    - name: mcp
+      path: src/mcp.rs
+      files: 1
+      lines: 29
+      entry_points:
+        - name: transport_stdio
+          path: src/mcp.rs
+          line: 27
+          kind: public_fn
+      dependencies: []
+
+    - name: bench
+      path: src/bench.rs
+      files: 1
+      lines: 60
+      entry_points:
+        - name: BenchConfig
+          path: src/bench.rs
+          line: 44
+          kind: exported_symbol
+      dependencies: []
+
+dependencies:
+  manifest: Cargo.toml
+  items:
+    # Core (always present)
+    - name: serde
+      version: "1.0"
+      kind: direct
+      notes: "with derive feature"
+    - name: tracing
+      version: "0.1"
+      kind: direct
+    - name: thiserror
+      version: "2.0"
+      kind: direct
+
+    # Feature: cli
+    - name: clap
+      version: "4.6"
+      kind: optional
+      notes: "with derive feature"
+    - name: owo-colors
+      version: "4.3"
+      kind: optional
+
+    # Feature: config
+    - name: toml
+      version: "0.8"
+      kind: optional
+    - name: serde-saphyr
+      version: "0.0"
+      kind: optional
+    - name: serde_json
+      version: "1.0"
+      kind: optional
+    - name: camino
+      version: "1.2"
+      kind: optional
+    - name: directories
+      version: "6.0"
+      kind: optional
+
+    # Feature: logging
+    - name: tracing-subscriber
+      version: "0.3"
+      kind: optional
+    - name: tracing-appender
+      version: "0.2"
+      kind: optional
+
+    # Feature: shutdown/otel/mcp
+    - name: tokio
+      version: "1.51"
+      kind: optional
+      notes: "features: rt, macros, signal, sync"
+    - name: opentelemetry
+      version: "0.31"
+      kind: optional
+    - name: opentelemetry_sdk
+      version: "0.31"
+      kind: optional
+    - name: opentelemetry-otlp
+      version: "0.31"
+      kind: optional
+    - name: tracing-opentelemetry
+      version: "0.32"
+      kind: optional
+    - name: rmcp
+      version: "1.3"
+      kind: optional
+
+    # Feature: lockfile
+    - name: fs4
+      version: "0.13"
+      kind: optional
+
+    # Feature: http
+    - name: hyper
+      version: "1.9"
+      kind: optional
+    - name: hyper-util
+      version: "0.1"
+      kind: optional
+    - name: http-body-util
+      version: "0.1"
+      kind: optional
+    - name: hyper-rustls
+      version: "0.27"
+      kind: optional
+    - name: rustls
+      version: "0.23"
+      kind: optional
+
+    # Feature: cache
+    - name: base64
+      version: "0.22"
+      kind: optional
+
+    # Feature: dispatch
+    - name: which
+      version: "7.0"
+      kind: optional
+
+    # Feature: diagnostics
+    - name: flate2
+      version: "1.1"
+      kind: optional
+    - name: tar
+      version: "0.4"
+      kind: optional
+
+    # Feature: bench
+    - name: divan
+      version: "0.1"
+      kind: optional
+    - name: gungraun
+      version: "0.17"
+      kind: optional
+      notes: "pulls unmaintained bincode 1.3.3 (RUSTSEC-2025-0141)"
+
+    # Dev dependencies
+    - name: tempfile
+      version: "3.27"
+      kind: dev
+    - name: serde_json
+      version: "1.0"
+      kind: dev
+    - name: tokio
+      version: "1.51"
+      kind: dev
+
+churn:
+  period: "last 12 months (all activity in April 2026)"
+  hotspots:
+    - path: src/lib.rs
+      commits: 13
+      authors: 1
+      last_touched: 2026-04-09
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,13]
+    - path: src/logging.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,6]
+    - path: src/error.rs
+      commits: 5
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,5]
+    - path: src/config.rs
+      commits: 4
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,4]
+    - path: src/shutdown.rs
+      commits: 4
+      authors: 1
+      last_touched: 2026-04-08
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,4]
+    - path: src/http.rs
+      commits: 3
+      authors: 1
+      last_touched: 2026-04-09
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+    - path: src/update.rs
+      commits: 3
+      authors: 1
+      last_touched: 2026-04-09
+      monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+
+  recent_activity:
+    total_commits: 29
+    active_authors: 1
+    files_changed: 32
+
+boundaries:
+  - name: external_input
+    description: Modules that parse untrusted data from files or network
+    modules: [config, http, cache, update]
+    notes: "Config parses TOML/YAML/JSON from disk; HTTP client receives network responses; cache reads/writes JSON files; update parses GitHub API responses"
+
+  - name: filesystem
+    description: Modules that create/modify filesystem state
+    modules: [logging, cache, crash, lockfile, diagnostics]
+    notes: "All write to user-controlled or platform-specific directories"
+
+  - name: process_control
+    description: Modules that affect process state
+    modules: [shutdown, crash, cli, dispatch]
+    notes: "Signal handlers, panic hooks, working directory changes, external process execution"
+
+  - name: network
+    description: Modules that make outbound network requests
+    modules: [http, update, otel]
+    notes: "HTTP client, GitHub API calls, OTLP telemetry export"

@@ -50,7 +50,7 @@ tokio = { version = "1.51", features = ["rt", "macros", "signal", "sync"], optio
 # Feature: otel
 opentelemetry = { version = "0.31", features = ["trace"], optional = true }
 opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.31", features = ["http-proto", "hyper-client"], optional = true }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "hyper-client", "trace"], optional = true }
 tracing-opentelemetry = { version = "0.32", optional = true }
 
 # Feature: mcp
