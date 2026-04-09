@@ -46,7 +46,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 tracing-appender = { version = "0.2", optional = true }
 
 # Feature: shutdown
-tokio = { version = "1.51", features = ["rt", "signal", "sync"], optional = true }
+tokio = { version = "1.51", features = ["rt", "macros", "signal", "sync"], optional = true }
 
 # Feature: otel
 opentelemetry = { version = "0.31", features = ["trace"], optional = true }

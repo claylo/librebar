@@ -81,6 +81,8 @@ pub struct App<C = ()> {
     config_sources: config::ConfigSources,
     #[cfg(feature = "cli")]
     cli: cli::CommonArgs,
+    #[cfg(feature = "shutdown")]
+    shutdown_handle: Option<shutdown::ShutdownHandle>,
     #[cfg(feature = "logging")]
     _logging_guard: Option<logging::LoggingGuard>,
 }
@@ -113,6 +115,23 @@ impl<C> App<C> {
     }
 }
 
+#[cfg(feature = "shutdown")]
+impl<C> App<C> {
+    /// Get a shutdown token for waiting on graceful shutdown.
+    ///
+    /// Returns `None` if `.shutdown()` was not called on the builder.
+    pub fn shutdown_token(&self) -> Option<shutdown::ShutdownToken> {
+        self.shutdown_handle.as_ref().map(|h| h.token())
+    }
+
+    /// Trigger shutdown programmatically.
+    pub fn shutdown(&self) {
+        if let Some(ref handle) = self.shutdown_handle {
+            handle.shutdown();
+        }
+    }
+}
+
 // ─── Builder ────────────────────────────────────────────────────────
 
 /// Start building a rebar application.
@@ -131,6 +150,10 @@ pub fn init(app_name: &str) -> Builder {
         cli: None,
         #[cfg(feature = "logging")]
         enable_logging: false,
+        #[cfg(feature = "shutdown")]
+        enable_shutdown: false,
+        #[cfg(feature = "crash")]
+        enable_crash: false,
     }
 }
 
@@ -144,6 +167,10 @@ pub struct Builder {
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
     enable_logging: bool,
+    #[cfg(feature = "shutdown")]
+    enable_shutdown: bool,
+    #[cfg(feature = "crash")]
+    enable_crash: bool,
 }
 
 impl Builder {
@@ -158,6 +185,20 @@ impl Builder {
     #[cfg(feature = "logging")]
     pub const fn logging(mut self) -> Self {
         self.enable_logging = true;
+        self
+    }
+
+    /// Enable graceful shutdown with signal handling.
+    #[cfg(feature = "shutdown")]
+    pub const fn shutdown(mut self) -> Self {
+        self.enable_shutdown = true;
+        self
+    }
+
+    /// Install a structured crash handler (panic hook with dump files).
+    #[cfg(feature = "crash")]
+    pub const fn crash_handler(mut self) -> Self {
+        self.enable_crash = true;
         self
     }
 
@@ -180,6 +221,20 @@ impl Builder {
             None
         };
 
+        #[cfg(feature = "shutdown")]
+        let shutdown_handle = if self.enable_shutdown {
+            let handle = shutdown::ShutdownHandle::new();
+            handle.register_signals()?;
+            Some(handle)
+        } else {
+            None
+        };
+
+        #[cfg(feature = "crash")]
+        if self.enable_crash {
+            crash::install(&self.app_name, env!("CARGO_PKG_VERSION"));
+        }
+
         Ok(App {
             app_name: self.app_name,
             config: (),
@@ -187,6 +242,8 @@ impl Builder {
             config_sources: config::ConfigSources::default(),
             #[cfg(feature = "cli")]
             cli: self.cli.unwrap_or_else(default_cli),
+            #[cfg(feature = "shutdown")]
+            shutdown_handle,
             #[cfg(feature = "logging")]
             _logging_guard: logging_guard,
         })
@@ -223,6 +280,10 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "shutdown")]
+            enable_shutdown: self.enable_shutdown,
+            #[cfg(feature = "crash")]
+            enable_crash: self.enable_crash,
             config_source: CfgSource::File(path.to_path_buf()),
         }
     }
@@ -240,6 +301,10 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "shutdown")]
+            enable_shutdown: self.enable_shutdown,
+            #[cfg(feature = "crash")]
+            enable_crash: self.enable_crash,
             config_source: CfgSource::Discover,
         }
     }
@@ -257,6 +322,10 @@ impl Builder {
             cli: self.cli,
             #[cfg(feature = "logging")]
             enable_logging: self.enable_logging,
+            #[cfg(feature = "shutdown")]
+            enable_shutdown: self.enable_shutdown,
+            #[cfg(feature = "crash")]
+            enable_crash: self.enable_crash,
             config_source: CfgSource::Preloaded(config),
         }
     }
@@ -287,6 +356,10 @@ pub struct ConfiguredBuilder<C> {
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
     enable_logging: bool,
+    #[cfg(feature = "shutdown")]
+    enable_shutdown: bool,
+    #[cfg(feature = "crash")]
+    enable_crash: bool,
     config_source: CfgSource<C>,
 }
 
@@ -303,6 +376,20 @@ impl<C> ConfiguredBuilder<C> {
     #[cfg(feature = "logging")]
     pub const fn logging(mut self) -> Self {
         self.enable_logging = true;
+        self
+    }
+
+    /// Enable graceful shutdown with signal handling.
+    #[cfg(feature = "shutdown")]
+    pub const fn shutdown(mut self) -> Self {
+        self.enable_shutdown = true;
+        self
+    }
+
+    /// Install a structured crash handler (panic hook with dump files).
+    #[cfg(feature = "crash")]
+    pub const fn crash_handler(mut self) -> Self {
+        self.enable_crash = true;
         self
     }
 
@@ -330,11 +417,13 @@ where
     ///
     /// Returns an error if config loading or logging initialization fails.
     pub fn start(self) -> Result<App<C>> {
-        // Capture cli flags before moving fields out of self
+        // Capture flags before moving fields out of self
         #[cfg(feature = "logging")]
         let cli_flags = self.cli_flags();
         #[cfg(feature = "logging")]
         let do_logging = self.enable_logging;
+        #[cfg(feature = "shutdown")]
+        let do_shutdown = self.enable_shutdown;
 
         let (config, sources) = match self.config_source {
             CfgSource::Discover => {
@@ -369,12 +458,28 @@ where
             None
         };
 
+        #[cfg(feature = "shutdown")]
+        let shutdown_handle = if do_shutdown {
+            let handle = shutdown::ShutdownHandle::new();
+            handle.register_signals()?;
+            Some(handle)
+        } else {
+            None
+        };
+
+        #[cfg(feature = "crash")]
+        if self.enable_crash {
+            crash::install(&self.app_name, env!("CARGO_PKG_VERSION"));
+        }
+
         Ok(App {
             app_name: self.app_name,
             config,
             config_sources: sources,
             #[cfg(feature = "cli")]
             cli: self.cli.unwrap_or_else(default_cli),
+            #[cfg(feature = "shutdown")]
+            shutdown_handle,
             #[cfg(feature = "logging")]
             _logging_guard: logging_guard,
         })
