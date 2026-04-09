@@ -42,6 +42,30 @@ pub enum Error {
     #[error("no active Tokio runtime: {0}")]
     NoRuntime(Box<dyn std::error::Error + Send + Sync>),
 
+    /// Lockfile acquisition failed.
+    #[error("failed to acquire lock: {0}")]
+    Lock(Box<dyn std::error::Error + Send + Sync>),
+
+    /// HTTP client error.
+    #[error("HTTP error: {0}")]
+    Http(Box<dyn std::error::Error + Send + Sync>),
+
+    /// Cache I/O error.
+    #[error("cache error: {0}")]
+    Cache(Box<dyn std::error::Error + Send + Sync>),
+
+    /// Update check error.
+    #[error("update check error: {0}")]
+    Update(Box<dyn std::error::Error + Send + Sync>),
+
+    /// External command dispatch error.
+    #[error("dispatch error: {0}")]
+    Dispatch(Box<dyn std::error::Error + Send + Sync>),
+
+    /// Diagnostic error.
+    #[error("diagnostic error: {0}")]
+    Diagnostic(Box<dyn std::error::Error + Send + Sync>),
+
     /// I/O error during initialization.
     #[error(transparent)]
     Io(#[from] std::io::Error),

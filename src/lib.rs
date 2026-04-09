@@ -66,6 +66,27 @@ pub mod crash;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 
+#[cfg(feature = "lockfile")]
+pub mod lockfile;
+
+#[cfg(feature = "http")]
+pub mod http;
+
+#[cfg(feature = "cache")]
+pub mod cache;
+
+#[cfg(feature = "update")]
+pub mod update;
+
+#[cfg(feature = "dispatch")]
+pub mod dispatch;
+
+#[cfg(feature = "diagnostics")]
+pub mod diagnostics;
+
+#[cfg(feature = "bench")]
+pub mod bench;
+
 #[cfg(feature = "logging")]
 use tracing_subscriber::layer::SubscriberExt;
 #[cfg(feature = "logging")]
