@@ -2,9 +2,83 @@
 //!
 //! Feature-gated modules for CLI, config, logging, and more.
 //! Each module is usable independently (escape hatches) or wired
-//! together through the builder.
+//! together through the builder. Enable only what you need.
+//!
+//! # Features
+//!
+//! Every module is behind a Cargo feature flag. No features are enabled
+//! by default — you opt in to exactly what your application needs.
+//!
+//! ## Core application features
+//!
+//! | Feature | Module | Use when your app needs... |
+//! |---------|--------|---------------------------|
+//! | `cli` | [`cli`] | Clap-based CLI with `--quiet`, `--verbose`, `--color`, `--json` flags |
+//! | `config` | [`config`] | Multi-format config discovery (TOML/YAML/JSON) with layered merge |
+//! | `logging` | [`logging`] | Structured JSONL file logging with rotation |
+//! | `shutdown` | [`shutdown`] | Graceful shutdown with SIGINT/SIGTERM handling |
+//! | `crash` | [`crash`] | Structured JSON crash dumps on panic |
+//!
+//! ## Networking and data
+//!
+//! | Feature | Module | Use when your app needs... |
+//! |---------|--------|---------------------------|
+//! | `http` | [`http`] | HTTP client with tracing, timeouts, user-agent (cleartext only) |
+//! | `cache` | [`cache`] | File-based key-value cache with TTL (XDG cache directory) |
+//! | `update` | [`update`] | "Update available" notifications via GitHub releases API |
+//!
+//! ## Integration features
+//!
+//! | Feature | Module | Use when your app needs... |
+//! |---------|--------|---------------------------|
+//! | `otel` | [`otel`] | OpenTelemetry tracing export (OTLP/HTTP) |
+//! | `otel-grpc` | [`otel`] | OpenTelemetry via gRPC (adds Tonic transport) |
+//! | `mcp` | [`mcp`] | Model Context Protocol server support |
+//!
+//! ## Operational features
+//!
+//! | Feature | Module | Use when your app needs... |
+//! |---------|--------|---------------------------|
+//! | `lockfile` | [`lockfile`] | Exclusive file locks to prevent concurrent instances |
+//! | `dispatch` | [`dispatch`] | Git-style `{app}-{subcommand}` plugin lookup on PATH |
+//! | `diagnostics` | [`diagnostics`] | `doctor` command framework + `.tar.gz` debug bundles |
+//!
+//! ## Benchmarking (dev-only)
+//!
+//! | Feature | Module | Use when your project needs... |
+//! |---------|--------|-------------------------------|
+//! | `bench` | [`bench`](mod@bench) | Wall-clock benchmarks via [divan](https://crates.io/crates/divan) (any platform) |
+//! | `bench-gungraun` | [`bench`](mod@bench) | Instruction-count benchmarks via [gungraun](https://crates.io/crates/gungraun) / Valgrind (Linux/Intel) |
+//!
+//! ## Feature implications
+//!
+//! Some features automatically enable their dependencies:
+//!
+//! - `update` implies `http` + `cache` (needs both for network checks and 24h caching)
+//! - `dispatch` implies `cli` (subcommand dispatch extends the CLI)
+//! - `diagnostics` implies `config` + `logging` (bundles need config sources and log paths)
+//! - `otel` implies `logging` (OTEL layer composes with the tracing subscriber)
+//! - `otel-grpc` implies `otel`
+//!
+//! ## Typical feature sets
+//!
+//! ```toml
+//! # Minimal CLI tool
+//! rebar = { version = "0.1", features = ["cli", "config", "logging"] }
+//!
+//! # CLI tool with update checks
+//! rebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "update"] }
+//!
+//! # Long-running service with observability
+//! rebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
+//!
+//! # Plugin-extensible CLI (git-style subcommands)
+//! rebar = { version = "0.1", features = ["cli", "config", "logging", "dispatch"] }
+//! ```
 //!
 //! # Builder usage
+//!
+//! The builder wires enabled features together in the correct init order:
 //!
 //! ```ignore
 //! use clap::Parser;
@@ -20,11 +94,17 @@
 //! let cli = Cli::parse();
 //!
 //! let app = rebar::init(env!("CARGO_PKG_NAME"))
+//!     .with_version(env!("CARGO_PKG_VERSION"))
 //!     .with_cli(cli.common)
 //!     .config::<Config>()
 //!     .logging()
+//!     .shutdown()
+//!     .crash_handler()
 //!     .start()?;
 //! ```
+//!
+//! Modules not wired through the builder (lockfile, http, cache, update,
+//! dispatch, diagnostics, bench) are used directly via their public APIs.
 //!
 //! # Type-state pattern
 //!
