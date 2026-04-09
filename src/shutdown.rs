@@ -38,6 +38,7 @@ impl ShutdownHandle {
     ///
     /// Safe to call multiple times — subsequent calls are no-ops.
     pub fn shutdown(&self) {
+        // Receiver may be dropped if no tokens are outstanding — that's fine.
         let _ = self.sender.send(true);
     }
 

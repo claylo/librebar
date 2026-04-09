@@ -32,6 +32,7 @@ use base64::Engine;
 use crate::error::{Error, Result};
 
 /// File-based cache with TTL support.
+#[derive(Debug)]
 pub struct Cache {
     dir: PathBuf,
 }
@@ -111,6 +112,7 @@ impl Cache {
 
         if now >= entry.expires_at {
             tracing::debug!(key, "cache entry expired");
+            // Best-effort cleanup: stale entry will be overwritten on next set().
             let _ = std::fs::remove_file(&path);
             return Ok(None);
         }
@@ -149,6 +151,7 @@ impl Cache {
             {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    // Best-effort: skip files that can't be removed (permissions, etc.)
                     let _ = std::fs::remove_file(&path);
                 }
             }

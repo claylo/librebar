@@ -248,39 +248,11 @@ impl<C> App<C> {
 
 // ─── Builder ────────────────────────────────────────────────────────
 
-/// Start building a rebar application.
+/// Shared state for subsystem toggles.
 ///
-/// ```ignore
-/// let app = rebar::init(env!("CARGO_PKG_NAME"))
-///     .with_cli(cli.common)
-///     .config::<Config>()
-///     .logging()
-///     .start()?;
-/// ```
-pub fn init(app_name: &str) -> Builder {
-    Builder {
-        app_name: app_name.to_string(),
-        version: None,
-        #[cfg(feature = "cli")]
-        cli: None,
-        #[cfg(feature = "logging")]
-        enable_logging: false,
-        #[cfg(feature = "logging")]
-        log_dir: None,
-        #[cfg(feature = "otel")]
-        enable_otel: false,
-        #[cfg(feature = "shutdown")]
-        enable_shutdown: false,
-        #[cfg(feature = "crash")]
-        enable_crash: false,
-    }
-}
-
-/// Builder for rebar application initialization.
-///
-/// Wires config discovery, logging setup, and CLI args in the correct
-/// initialization order.
-pub struct Builder {
+/// Used internally by [`Builder`] and [`ConfiguredBuilder`]. Both outer
+/// types delegate their builder methods here via [`builder_methods!`].
+struct BuilderInner {
     app_name: String,
     version: Option<String>,
     #[cfg(feature = "cli")]
@@ -297,67 +269,38 @@ pub struct Builder {
     enable_crash: bool,
 }
 
-impl Builder {
-    /// Provide parsed CLI common arguments.
+/// Intermediate result from [`BuilderInner::init_subsystems`].
+struct SubsystemInit {
+    app_name: String,
+    version: String,
     #[cfg(feature = "cli")]
-    pub fn with_cli(mut self, common: cli::CommonArgs) -> Self {
-        self.cli = Some(common);
-        self
-    }
-
-    /// Enable JSONL logging.
-    #[cfg(feature = "logging")]
-    pub const fn logging(mut self) -> Self {
-        self.enable_logging = true;
-        self
-    }
-
-    /// Set the log directory explicitly.
-    #[cfg(feature = "logging")]
-    pub fn with_log_dir(mut self, dir: std::path::PathBuf) -> Self {
-        self.log_dir = Some(dir);
-        self
-    }
-
-    /// Enable OpenTelemetry tracing export.
-    #[cfg(feature = "otel")]
-    pub const fn otel(mut self) -> Self {
-        self.enable_otel = true;
-        self
-    }
-
-    /// Enable graceful shutdown with signal handling.
+    cli: cli::CommonArgs,
     #[cfg(feature = "shutdown")]
-    pub const fn shutdown(mut self) -> Self {
-        self.enable_shutdown = true;
-        self
+    shutdown_handle: Option<shutdown::ShutdownHandle>,
+    #[cfg(feature = "otel")]
+    otel_guard: Option<otel::OtelGuard>,
+    #[cfg(feature = "logging")]
+    logging_guard: Option<logging::LoggingGuard>,
+}
+
+impl BuilderInner {
+    #[cfg(all(feature = "logging", feature = "cli"))]
+    fn cli_flags(&self) -> (bool, u8) {
+        self.cli
+            .as_ref()
+            .map_or((false, 0), |c| (c.quiet, c.verbose))
     }
 
-    /// Install a structured crash handler (panic hook with dump files).
-    #[cfg(feature = "crash")]
-    pub const fn crash_handler(mut self) -> Self {
-        self.enable_crash = true;
-        self
+    #[cfg(all(feature = "logging", not(feature = "cli")))]
+    fn cli_flags(&self) -> (bool, u8) {
+        (false, 0)
     }
 
-    /// Set the application version for crash dumps and OTEL resource attributes.
+    /// Initialize tracing, shutdown, and crash subsystems.
     ///
-    /// If not set, crash and OTEL use the rebar crate version.
-    pub fn with_version(mut self, version: &str) -> Self {
-        self.version = Some(version.to_string());
-        self
-    }
-
-    /// Finalize initialization without config.
-    ///
-    /// Returns `App<()>`. Use [`config_from_file`](Self::config_from_file)
-    /// or [`with_config`](Self::with_config) to get `App<C>` with a typed config.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if logging initialization fails.
-    pub fn start(self) -> Result<App> {
-        // Capture flags before moving fields out of self
+    /// Consumes the inner builder and returns the initialized
+    /// subsystem handles, ready to be assembled into an [`App`].
+    fn init_subsystems(self) -> Result<SubsystemInit> {
         #[cfg(feature = "logging")]
         let cli_flags = self.cli_flags();
         #[cfg(feature = "logging")]
@@ -431,33 +374,147 @@ impl Builder {
             crash::install(&self.app_name, &app_version);
         }
 
-        Ok(App {
+        Ok(SubsystemInit {
             app_name: self.app_name,
             version: app_version,
-            config: (),
-            #[cfg(feature = "config")]
-            config_sources: config::ConfigSources::default(),
             #[cfg(feature = "cli")]
             cli: self.cli.unwrap_or_else(default_cli),
             #[cfg(feature = "shutdown")]
             shutdown_handle,
             #[cfg(feature = "otel")]
-            _otel_guard: otel_guard,
+            otel_guard,
             #[cfg(feature = "logging")]
-            _logging_guard: log_guard,
+            logging_guard: log_guard,
         })
     }
+}
 
-    #[cfg(all(feature = "logging", feature = "cli"))]
-    fn cli_flags(&self) -> (bool, u8) {
-        self.cli
-            .as_ref()
-            .map_or((false, 0), |c| (c.quiet, c.verbose))
+/// Shared builder methods for subsystem toggles.
+///
+/// Both [`Builder`] and [`ConfiguredBuilder`] delegate to the same
+/// [`BuilderInner`] fields. This macro generates the forwarding
+/// methods so the documentation and behavior stay in sync.
+macro_rules! builder_methods {
+    () => {
+        /// Provide parsed CLI common arguments.
+        #[cfg(feature = "cli")]
+        pub fn with_cli(mut self, common: cli::CommonArgs) -> Self {
+            self.inner.cli = Some(common);
+            self
+        }
+
+        /// Enable JSONL logging.
+        #[cfg(feature = "logging")]
+        pub const fn logging(mut self) -> Self {
+            self.inner.enable_logging = true;
+            self
+        }
+
+        /// Set the log directory explicitly.
+        #[cfg(feature = "logging")]
+        pub fn with_log_dir(mut self, dir: std::path::PathBuf) -> Self {
+            self.inner.log_dir = Some(dir);
+            self
+        }
+
+        /// Enable OpenTelemetry tracing export.
+        #[cfg(feature = "otel")]
+        pub const fn otel(mut self) -> Self {
+            self.inner.enable_otel = true;
+            self
+        }
+
+        /// Enable graceful shutdown with signal handling.
+        #[cfg(feature = "shutdown")]
+        pub const fn shutdown(mut self) -> Self {
+            self.inner.enable_shutdown = true;
+            self
+        }
+
+        /// Install a structured crash handler (panic hook with dump files).
+        #[cfg(feature = "crash")]
+        pub const fn crash_handler(mut self) -> Self {
+            self.inner.enable_crash = true;
+            self
+        }
+
+        /// Set the application version for crash dumps and OTEL resource
+        /// attributes.
+        ///
+        /// If not set, crash and OTEL use the rebar crate version.
+        pub fn with_version(mut self, version: &str) -> Self {
+            self.inner.version = Some(version.to_string());
+            self
+        }
+    };
+}
+
+/// Start building a rebar application.
+///
+/// ```ignore
+/// let app = rebar::init(env!("CARGO_PKG_NAME"))
+///     .with_cli(cli.common)
+///     .config::<Config>()
+///     .logging()
+///     .start()?;
+/// ```
+pub fn init(app_name: &str) -> Builder {
+    Builder {
+        inner: BuilderInner {
+            app_name: app_name.to_string(),
+            version: None,
+            #[cfg(feature = "cli")]
+            cli: None,
+            #[cfg(feature = "logging")]
+            enable_logging: false,
+            #[cfg(feature = "logging")]
+            log_dir: None,
+            #[cfg(feature = "otel")]
+            enable_otel: false,
+            #[cfg(feature = "shutdown")]
+            enable_shutdown: false,
+            #[cfg(feature = "crash")]
+            enable_crash: false,
+        },
     }
+}
 
-    #[cfg(all(feature = "logging", not(feature = "cli")))]
-    fn cli_flags(&self) -> (bool, u8) {
-        (false, 0)
+/// Builder for rebar application initialization.
+///
+/// Wires config discovery, logging setup, and CLI args in the correct
+/// initialization order.
+pub struct Builder {
+    inner: BuilderInner,
+}
+
+impl Builder {
+    builder_methods!();
+
+    /// Finalize initialization without config.
+    ///
+    /// Returns `App<()>`. Use [`config_from_file`](Self::config_from_file)
+    /// or [`with_config`](Self::with_config) to get `App<C>` with a typed config.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if logging initialization fails.
+    pub fn start(self) -> Result<App> {
+        let sub = self.inner.init_subsystems()?;
+        Ok(App {
+            app_name: sub.app_name,
+            version: sub.version,
+            config: (),
+            #[cfg(feature = "config")]
+            config_sources: config::ConfigSources::default(),
+            #[cfg(feature = "cli")]
+            cli: sub.cli,
+            #[cfg(feature = "shutdown")]
+            shutdown_handle: sub.shutdown_handle,
+            #[cfg(feature = "otel")]
+            _otel_guard: sub.otel_guard,
+            #[cfg(feature = "logging")]
+            _logging_guard: sub.logging_guard,
+        })
     }
 }
 
@@ -474,20 +531,7 @@ impl Builder {
         C: serde::de::DeserializeOwned + Default + serde::Serialize,
     {
         ConfiguredBuilder {
-            app_name: self.app_name,
-            version: self.version,
-            #[cfg(feature = "cli")]
-            cli: self.cli,
-            #[cfg(feature = "logging")]
-            enable_logging: self.enable_logging,
-            #[cfg(feature = "logging")]
-            log_dir: self.log_dir,
-            #[cfg(feature = "otel")]
-            enable_otel: self.enable_otel,
-            #[cfg(feature = "shutdown")]
-            enable_shutdown: self.enable_shutdown,
-            #[cfg(feature = "crash")]
-            enable_crash: self.enable_crash,
+            inner: self.inner,
             config_source: CfgSource::File(path.to_path_buf()),
         }
     }
@@ -500,20 +544,7 @@ impl Builder {
         C: serde::de::DeserializeOwned + Default + serde::Serialize,
     {
         ConfiguredBuilder {
-            app_name: self.app_name,
-            version: self.version,
-            #[cfg(feature = "cli")]
-            cli: self.cli,
-            #[cfg(feature = "logging")]
-            enable_logging: self.enable_logging,
-            #[cfg(feature = "logging")]
-            log_dir: self.log_dir,
-            #[cfg(feature = "otel")]
-            enable_otel: self.enable_otel,
-            #[cfg(feature = "shutdown")]
-            enable_shutdown: self.enable_shutdown,
-            #[cfg(feature = "crash")]
-            enable_crash: self.enable_crash,
+            inner: self.inner,
             config_source: CfgSource::Discover,
         }
     }
@@ -526,20 +557,7 @@ impl Builder {
         C: serde::Serialize,
     {
         ConfiguredBuilder {
-            app_name: self.app_name,
-            version: self.version,
-            #[cfg(feature = "cli")]
-            cli: self.cli,
-            #[cfg(feature = "logging")]
-            enable_logging: self.enable_logging,
-            #[cfg(feature = "logging")]
-            log_dir: self.log_dir,
-            #[cfg(feature = "otel")]
-            enable_otel: self.enable_otel,
-            #[cfg(feature = "shutdown")]
-            enable_shutdown: self.enable_shutdown,
-            #[cfg(feature = "crash")]
-            enable_crash: self.enable_crash,
+            inner: self.inner,
             config_source: CfgSource::Preloaded(config),
         }
     }
@@ -565,86 +583,13 @@ enum CfgSource<C> {
 /// or [`Builder::with_config`]. Call [`.start()`](Self::start) to finalize.
 #[cfg(feature = "config")]
 pub struct ConfiguredBuilder<C> {
-    app_name: String,
-    version: Option<String>,
-    #[cfg(feature = "cli")]
-    cli: Option<cli::CommonArgs>,
-    #[cfg(feature = "logging")]
-    enable_logging: bool,
-    #[cfg(feature = "logging")]
-    log_dir: Option<std::path::PathBuf>,
-    #[cfg(feature = "otel")]
-    enable_otel: bool,
-    #[cfg(feature = "shutdown")]
-    enable_shutdown: bool,
-    #[cfg(feature = "crash")]
-    enable_crash: bool,
+    inner: BuilderInner,
     config_source: CfgSource<C>,
 }
 
 #[cfg(feature = "config")]
 impl<C> ConfiguredBuilder<C> {
-    /// Provide parsed CLI common arguments.
-    #[cfg(feature = "cli")]
-    pub fn with_cli(mut self, common: cli::CommonArgs) -> Self {
-        self.cli = Some(common);
-        self
-    }
-
-    /// Enable JSONL logging.
-    #[cfg(feature = "logging")]
-    pub const fn logging(mut self) -> Self {
-        self.enable_logging = true;
-        self
-    }
-
-    /// Set the log directory explicitly.
-    #[cfg(feature = "logging")]
-    pub fn with_log_dir(mut self, dir: std::path::PathBuf) -> Self {
-        self.log_dir = Some(dir);
-        self
-    }
-
-    /// Enable OpenTelemetry tracing export.
-    #[cfg(feature = "otel")]
-    pub const fn otel(mut self) -> Self {
-        self.enable_otel = true;
-        self
-    }
-
-    /// Enable graceful shutdown with signal handling.
-    #[cfg(feature = "shutdown")]
-    pub const fn shutdown(mut self) -> Self {
-        self.enable_shutdown = true;
-        self
-    }
-
-    /// Install a structured crash handler (panic hook with dump files).
-    #[cfg(feature = "crash")]
-    pub const fn crash_handler(mut self) -> Self {
-        self.enable_crash = true;
-        self
-    }
-
-    /// Set the application version for crash dumps and OTEL resource attributes.
-    ///
-    /// If not set, crash and OTEL use the rebar crate version.
-    pub fn with_version(mut self, version: &str) -> Self {
-        self.version = Some(version.to_string());
-        self
-    }
-
-    #[cfg(all(feature = "logging", feature = "cli"))]
-    fn cli_flags(&self) -> (bool, u8) {
-        self.cli
-            .as_ref()
-            .map_or((false, 0), |c| (c.quiet, c.verbose))
-    }
-
-    #[cfg(all(feature = "logging", not(feature = "cli")))]
-    fn cli_flags(&self) -> (bool, u8) {
-        (false, 0)
-    }
+    builder_methods!();
 }
 
 #[cfg(feature = "config")]
@@ -658,19 +603,6 @@ where
     ///
     /// Returns an error if config loading or logging initialization fails.
     pub fn start(self) -> Result<App<C>> {
-        // Capture flags before moving fields out of self
-        #[cfg(feature = "logging")]
-        let cli_flags = self.cli_flags();
-        #[cfg(feature = "logging")]
-        let do_logging = self.enable_logging;
-        #[cfg(feature = "otel")]
-        let do_otel = self.enable_otel;
-        #[cfg(feature = "shutdown")]
-        let do_shutdown = self.enable_shutdown;
-        let app_version = self
-            .version
-            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-
         let (config, sources) = match self.config_source {
             CfgSource::Discover => {
                 let cwd = std::env::current_dir().map_err(crate::Error::Io)?;
@@ -683,95 +615,31 @@ where
                         ),
                     ))
                 })?;
-                config::ConfigLoader::new(&self.app_name)
+                config::ConfigLoader::new(&self.inner.app_name)
                     .with_project_search(&cwd)
                     .load::<C>()?
             }
-            CfgSource::File(path) => config::ConfigLoader::new(&self.app_name)
+            CfgSource::File(path) => config::ConfigLoader::new(&self.inner.app_name)
                 .with_user_config(false)
                 .with_file(&path)
                 .load::<C>()?,
             CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
         };
 
-        // Build layers
-        #[cfg(feature = "logging")]
-        let (log_layer, log_guard) = if do_logging {
-            let log_cfg =
-                logging::LoggingConfig::from_app_name(&self.app_name).with_log_dir(self.log_dir);
-            let (layer, guard) = logging::build_json_layer(&log_cfg)?;
-            (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
-        } else {
-            (None, None)
-        };
-
-        #[cfg(feature = "otel")]
-        let (otel_layer, otel_guard) = if do_otel {
-            let otel_cfg = otel::OtelConfig::from_app_name(&self.app_name, &app_version);
-            otel::build_otel_layer(&otel_cfg)?
-        } else {
-            (None, None)
-        };
-
-        // Compose tracing subscriber
-        #[cfg(all(feature = "logging", not(feature = "otel")))]
-        if log_layer.is_some() {
-            let (quiet, verbose) = cli_flags;
-            let filter = logging::env_filter(quiet, verbose, "info");
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(log_layer)
-                .try_init()
-                .map_err(|e| Error::TracingInit(Box::new(e)))?;
-        }
-
-        #[cfg(all(feature = "logging", feature = "otel"))]
-        if log_layer.is_some() || otel_layer.is_some() {
-            let (quiet, verbose) = cli_flags;
-            let filter = logging::env_filter(quiet, verbose, "info");
-            let mut layers: Vec<
-                Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>,
-            > = Vec::new();
-            layers.push(Box::new(filter));
-            if let Some(l) = log_layer {
-                layers.push(Box::new(l));
-            }
-            if let Some(l) = otel_layer {
-                layers.push(l);
-            }
-            tracing_subscriber::registry()
-                .with(layers)
-                .try_init()
-                .map_err(|e| Error::TracingInit(Box::new(e)))?;
-        }
-
-        #[cfg(feature = "shutdown")]
-        let shutdown_handle = if do_shutdown {
-            let handle = shutdown::ShutdownHandle::new();
-            handle.register_signals()?;
-            Some(handle)
-        } else {
-            None
-        };
-
-        #[cfg(feature = "crash")]
-        if self.enable_crash {
-            crash::install(&self.app_name, &app_version);
-        }
-
+        let sub = self.inner.init_subsystems()?;
         Ok(App {
-            app_name: self.app_name,
-            version: app_version,
+            app_name: sub.app_name,
+            version: sub.version,
             config,
             config_sources: sources,
             #[cfg(feature = "cli")]
-            cli: self.cli.unwrap_or_else(default_cli),
+            cli: sub.cli,
             #[cfg(feature = "shutdown")]
-            shutdown_handle,
+            shutdown_handle: sub.shutdown_handle,
             #[cfg(feature = "otel")]
-            _otel_guard: otel_guard,
+            _otel_guard: sub.otel_guard,
             #[cfg(feature = "logging")]
-            _logging_guard: log_guard,
+            _logging_guard: sub.logging_guard,
         })
     }
 }

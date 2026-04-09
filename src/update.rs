@@ -41,6 +41,7 @@ impl UpdateInfo {
 }
 
 /// Checks GitHub releases for new versions.
+#[derive(Debug)]
 pub struct UpdateChecker {
     app_name: String,
     current_version: String,
@@ -118,13 +119,18 @@ impl UpdateChecker {
             return None;
         }
 
-        let body = resp.text().ok()?;
-        let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+        let json: serde_json::Value = match resp.json() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(error = %e, "failed to parse release response");
+                return None;
+            }
+        };
         let tag = json.get("tag_name")?.as_str()?;
         let latest = tag.strip_prefix('v').unwrap_or(tag);
         let html_url = json.get("html_url")?.as_str().unwrap_or("");
 
-        // Cache the result
+        // Cache the result (best-effort: stale cache just means another API call)
         if let Some(cache) = crate::cache::Cache::default_for(&self.app_name) {
             let _ = cache.set(CACHE_KEY, latest.as_bytes(), CACHE_TTL);
         }

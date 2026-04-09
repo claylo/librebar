@@ -28,6 +28,7 @@ use crate::{Error, Result};
 // ─── Config ─────────────────────────────────────────────────────────
 
 /// Configuration for [`HttpClient`].
+#[derive(Debug)]
 pub struct HttpClientConfig {
     /// Value sent as the `User-Agent` header on every request.
     pub user_agent: String,
@@ -62,7 +63,8 @@ impl HttpClientConfig {
 // ─── Client ─────────────────────────────────────────────────────────
 
 /// HTTPS connector type used by the client.
-type HttpsConnector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
+type HttpsConnector =
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 
 /// HTTP/HTTPS client with tracing and timeout support.
 ///
@@ -166,11 +168,42 @@ pub struct Response {
 impl Response {
     /// Attempt to decode the body as UTF-8 text.
     ///
+    /// This clones the body. Use [`into_text`](Self::into_text) when you
+    /// no longer need the `Response`.
+    ///
     /// # Errors
     ///
     /// Returns [`std::string::FromUtf8Error`] if the body is not valid UTF-8.
     pub fn text(&self) -> std::result::Result<String, std::string::FromUtf8Error> {
         String::from_utf8(self.body.clone())
+    }
+
+    /// Consume the response and decode the body as UTF-8 text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::string::FromUtf8Error`] if the body is not valid UTF-8.
+    pub fn into_text(self) -> std::result::Result<String, std::string::FromUtf8Error> {
+        String::from_utf8(self.body)
+    }
+
+    /// Borrow the body as a UTF-8 string slice without copying.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::str::Utf8Error`] if the body is not valid UTF-8.
+    pub fn text_ref(&self) -> std::result::Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.body)
+    }
+
+    /// Deserialize the response body as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Http`] if the body is not valid JSON or cannot
+    /// be deserialized into `T`.
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> crate::Result<T> {
+        serde_json::from_slice(&self.body).map_err(|e| crate::Error::Http(Box::new(e)))
     }
 
     /// Return the raw response body bytes.

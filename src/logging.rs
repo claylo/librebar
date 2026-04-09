@@ -421,10 +421,14 @@ where
 
         let timestamp = format_timestamp();
         map.insert("timestamp".to_string(), Value::String(timestamp));
-        map.insert(
-            "level".to_string(),
-            Value::String(event.metadata().level().as_str().to_lowercase()),
-        );
+        let level = match *event.metadata().level() {
+            tracing::Level::TRACE => "trace",
+            tracing::Level::DEBUG => "debug",
+            tracing::Level::INFO => "info",
+            tracing::Level::WARN => "warn",
+            tracing::Level::ERROR => "error",
+        };
+        map.insert("level".to_string(), Value::String(level.to_owned()));
         map.insert(
             "target".to_string(),
             Value::String(event.metadata().target().to_string()),
@@ -445,7 +449,11 @@ where
         if let Ok(mut buf) = serde_json::to_vec(&Value::Object(map)) {
             buf.push(b'\n');
             let mut writer = self.writer.make_writer();
-            let _ = writer.write_all(&buf);
+            // Best-effort: tracing Layer callbacks cannot return errors,
+            // so fall back to stderr if the log sink is broken.
+            if writer.write_all(&buf).is_err() {
+                eprintln!("[rebar] failed to write log entry to sink");
+            }
         }
     }
 }

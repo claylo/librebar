@@ -47,7 +47,10 @@ async fn https_get_succeeds() {
         .expect("HTTPS GET should succeed");
     assert!(resp.is_success(), "status: {}", resp.status);
     let body = resp.text().unwrap();
-    assert!(!body.is_empty(), "GitHub zen should return a non-empty string");
+    assert!(
+        !body.is_empty(),
+        "GitHub zen should return a non-empty string"
+    );
 }
 
 #[tokio::test]

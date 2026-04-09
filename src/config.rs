@@ -104,19 +104,37 @@ impl ConfigSources {
 
 // ─── Deep Merge ─────────────────────────────────────────────────────
 
+/// Maximum nesting depth for [`deep_merge`]. 64 levels is generous for
+/// any config format — pathological inputs are rejected rather than
+/// allowed to exhaust the stack.
+const MERGE_DEPTH_LIMIT: usize = 64;
+
 /// Deep-merge `overlay` into `base`.
 ///
 /// - Objects: recursively merge, overlay keys win.
 /// - Scalars and arrays: overlay replaces base.
-pub fn deep_merge(base: &mut Value, overlay: Value) {
-    match (base, overlay) {
-        (Value::Object(base_map), Value::Object(overlay_map)) => {
-            for (key, value) in overlay_map {
-                deep_merge(base_map.entry(key).or_insert(Value::Null), value);
-            }
+///
+/// # Errors
+///
+/// Returns [`Error::ConfigDeserialize`] if the nesting depth exceeds 64 levels.
+pub fn deep_merge(base: &mut Value, overlay: Value) -> Result<()> {
+    fn merge_inner(base: &mut Value, overlay: Value, depth: usize) -> Result<()> {
+        if depth > MERGE_DEPTH_LIMIT {
+            return Err(crate::Error::ConfigDeserialize(
+                format!("config nesting exceeds {MERGE_DEPTH_LIMIT} levels").into(),
+            ));
         }
-        (base, overlay) => *base = overlay,
+        match (base, overlay) {
+            (Value::Object(base_map), Value::Object(overlay_map)) => {
+                for (key, value) in overlay_map {
+                    merge_inner(base_map.entry(key).or_insert(Value::Null), value, depth + 1)?;
+                }
+            }
+            (base, overlay) => *base = overlay,
+        }
+        Ok(())
     }
+    merge_inner(base, overlay, 0)
 }
 
 // ─── File Parsing ───────────────────────────────────────────────────
@@ -270,7 +288,7 @@ impl ConfigLoader {
         {
             tracing::debug!(path = %user_config, "discovered user config");
             let value = parse_file(&user_config)?;
-            deep_merge(&mut merged, value);
+            deep_merge(&mut merged, value)?;
             sources.user_file = Some(user_config);
         }
 
@@ -280,7 +298,7 @@ impl ConfigLoader {
         {
             tracing::debug!(path = %project_config, "discovered project config");
             let value = parse_file(&project_config)?;
-            deep_merge(&mut merged, value);
+            deep_merge(&mut merged, value)?;
             sources.project_file = Some(project_config);
         }
 
@@ -288,7 +306,7 @@ impl ConfigLoader {
         for file in &self.explicit_files {
             tracing::debug!(path = %file, "loading explicit config");
             let value = parse_file(file)?;
-            deep_merge(&mut merged, value);
+            deep_merge(&mut merged, value)?;
         }
         sources.explicit_files = self.explicit_files;
 

@@ -32,7 +32,7 @@ use crate::error::{Error, Result};
 // ─── Doctor Framework ──────────────────────────────────────────────
 
 /// Trait for doctor checks. Implement for each diagnostic check.
-pub trait DoctorCheck {
+pub trait DoctorCheck: Send {
     /// Short name for the check (e.g., "config", "permissions").
     fn name(&self) -> &str;
 
@@ -187,6 +187,7 @@ impl Default for DoctorRunner {
 // ─── Debug Bundle ──────────────────────────────────────────────────
 
 /// Builder for diagnostic debug bundles (tar.gz archives).
+#[derive(Debug)]
 pub struct DebugBundle {
     app_name: String,
     dir: PathBuf,
@@ -206,20 +207,20 @@ impl DebugBundle {
     }
 
     /// Add a text file to the bundle.
-    pub fn add_text(&mut self, name: &str, content: &str) -> Result<()> {
+    pub fn add_text(&mut self, name: &str, content: &str) -> &mut Self {
         self.files
             .push((name.to_string(), content.as_bytes().to_vec()));
-        Ok(())
+        self
     }
 
     /// Add a binary file to the bundle.
-    pub fn add_bytes(&mut self, name: &str, data: &[u8]) -> Result<()> {
+    pub fn add_bytes(&mut self, name: &str, data: &[u8]) -> &mut Self {
         self.files.push((name.to_string(), data.to_vec()));
-        Ok(())
+        self
     }
 
     /// Add doctor results to the bundle.
-    pub fn add_doctor_results(&mut self, results: &[NamedResult]) -> Result<()> {
+    pub fn add_doctor_results(&mut self, results: &[NamedResult]) -> &mut Self {
         let report = DoctorRunner::format_report(results);
         self.add_text("doctor-report.txt", &report)
     }
