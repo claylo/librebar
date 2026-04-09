@@ -227,7 +227,7 @@ impl DebugBundle {
 
     /// Write the tar.gz archive and return its path.
     pub fn finish(self) -> Result<PathBuf> {
-        std::fs::create_dir_all(&self.dir).map_err(|e| Error::Diagnostic(Box::new(e)))?;
+        std::fs::create_dir_all(&self.dir).map_err(Error::Diagnostic)?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -237,7 +237,7 @@ impl DebugBundle {
         let filename = format!("{}-debug-{timestamp}.tar.gz", self.app_name);
         let path = self.dir.join(&filename);
 
-        let file = std::fs::File::create(&path).map_err(|e| Error::Diagnostic(Box::new(e)))?;
+        let file = std::fs::File::create(&path).map_err(Error::Diagnostic)?;
         let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
         let mut archive = tar::Builder::new(encoder);
 
@@ -248,14 +248,14 @@ impl DebugBundle {
             header.set_cksum();
             archive
                 .append_data(&mut header, name, data.as_slice())
-                .map_err(|e| Error::Diagnostic(Box::new(e)))?;
+                .map_err(Error::Diagnostic)?;
         }
 
         archive
             .into_inner()
-            .map_err(|e| Error::Diagnostic(Box::new(e)))?
+            .map_err(Error::Diagnostic)?
             .finish()
-            .map_err(|e| Error::Diagnostic(Box::new(e)))?;
+            .map_err(Error::Diagnostic)?;
 
         tracing::info!(path = %path.display(), "debug bundle created");
         Ok(path)

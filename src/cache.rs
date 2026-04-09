@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 
-use crate::error::{Error, Result};
+use crate::error::{CacheError, Result};
 
 /// File-based cache with TTL support.
 #[derive(Debug)]
@@ -67,7 +67,7 @@ impl Cache {
     ///
     /// Returns [`Error::Cache`] if the entry cannot be written.
     pub fn set(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
-        std::fs::create_dir_all(&self.dir).map_err(|e| Error::Cache(Box::new(e)))?;
+        std::fs::create_dir_all(&self.dir).map_err(CacheError::from)?;
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -80,8 +80,8 @@ impl Cache {
         };
 
         let path = self.key_path(key);
-        let json = serde_json::to_vec(&entry).map_err(|e| Error::Cache(Box::new(e)))?;
-        std::fs::write(&path, json).map_err(|e| Error::Cache(Box::new(e)))?;
+        let json = serde_json::to_vec(&entry).map_err(CacheError::from)?;
+        std::fs::write(&path, json).map_err(CacheError::from)?;
 
         tracing::debug!(key, expires_at, "cache entry written");
         Ok(())
@@ -99,11 +99,10 @@ impl Cache {
         let data = match std::fs::read(&path) {
             Ok(data) => data,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(Error::Cache(Box::new(e))),
+            Err(e) => return Err(CacheError::from(e).into()),
         };
 
-        let entry: CacheEntry =
-            serde_json::from_slice(&data).map_err(|e| Error::Cache(Box::new(e)))?;
+        let entry: CacheEntry = serde_json::from_slice(&data).map_err(CacheError::Json)?;
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -119,7 +118,7 @@ impl Cache {
 
         let value = base64::engine::general_purpose::STANDARD
             .decode(&entry.value)
-            .map_err(|e| Error::Cache(Box::new(e)))?;
+            .map_err(CacheError::from)?;
 
         Ok(Some(value))
     }
@@ -134,7 +133,7 @@ impl Cache {
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(Error::Cache(Box::new(e))),
+            Err(e) => Err(CacheError::from(e).into()),
         }
     }
 
@@ -146,7 +145,7 @@ impl Cache {
     pub fn clear(&self) -> Result<()> {
         if self.dir.exists() {
             for entry in std::fs::read_dir(&self.dir)
-                .map_err(|e| Error::Cache(Box::new(e)))?
+                .map_err(CacheError::from)?
                 .flatten()
             {
                 let path = entry.path();

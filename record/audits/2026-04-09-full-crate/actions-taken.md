@@ -2,11 +2,11 @@
 audit: 2026-04-09-full-crate
 last_updated: 2026-04-09
 status:
-  fixed: 10
+  fixed: 12
   mitigated: 0
   accepted: 1
   disputed: 0
-  deferred: 2
+  deferred: 0
   open: 0
 ---
 
@@ -141,11 +141,17 @@ The `fields.values.clone()` in the logging layer is structurally required by the
 
 ---
 
-## 2026-04-09 — Defer error type refinement to pre-1.0
+## 2026-04-09 — Replace Box<dyn Error> with concrete types, feature-gate error variants
 
-**Disposition:** deferred
+**Disposition:** fixed
 **Addresses:** [error-type-erasure](index.md#error-variants-erase-concrete-source-types-behind-boxdyn-error)
-**Commit:** n/a — tracked for pre-1.0 milestone
+**Commit:** pending (fix/audit-remediation branch)
 **Author:** Clay Loveless
 
-The `Box<dyn Error>` pattern in 11/13 error variants is pragmatic for 0.1.0. The most actionable variants (Http, Cache) would benefit from concrete error enums, but the right variants to expose depend on downstream usage patterns that don't exist yet. Init-time errors (OtelInit, TracingInit, ShutdownInit) are reasonable as Box<dyn Error> since callers rarely inspect those. Deferring to pre-1.0 when real consumers inform the design.
+Every error variant now carries concrete source types instead of `Box<dyn Error + Send + Sync>`. All variants are feature-gated to match the modules that produce them. Three per-module error enums provide typed discrimination for multi-source variants:
+
+- `HttpError` — `Tls`, `InvalidUrl`, `RequestBuild`, `Request`, `Body`, `Io`, `Json`
+- `CacheError` — `Io`, `Json`, `Decode`
+- `ConfigParseError` — `Toml`, `Yaml`, `Json`, `Io`
+
+Single-source variants use their concrete type directly: `OtelInit(ExporterBuildError)`, `TracingInit(TryInitError)`, `NoRuntime(TryCurrentError)`, `ShutdownInit(io::Error)`, `Lock(io::Error)`, `Dispatch(io::Error)`, `Diagnostic(io::Error)`. The `ConfigDeserialize` variant now takes `serde_json::Error` directly, with a new `ConfigMergeDepth` variant for the depth-limit error. Removed the unused `Update` variant.

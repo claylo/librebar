@@ -59,10 +59,10 @@ where
         .args(args)
         .status()
         .map_err(|e| {
-            Error::Dispatch(Box::new(std::io::Error::new(
+            Error::Dispatch(std::io::Error::new(
                 e.kind(),
                 format!("failed to execute {}: {e}", binary_path.display()),
-            )))
+            ))
         })?;
 
     tracing::debug!(exit_code = ?status.code(), "external command finished");

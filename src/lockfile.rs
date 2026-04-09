@@ -107,10 +107,10 @@ impl Lockfile {
             .open(&self.path)?;
 
         file.try_lock_exclusive().map_err(|e| {
-            Error::Lock(Box::new(std::io::Error::new(
+            Error::Lock(std::io::Error::new(
                 e.kind(),
                 format!("another instance holds the lock: {}", self.path.display()),
-            )))
+            ))
         })?;
 
         tracing::debug!(path = %self.path.display(), "lock acquired");

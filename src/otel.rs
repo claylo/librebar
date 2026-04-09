@@ -159,13 +159,13 @@ fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::
             .with_tonic()
             .with_endpoint(endpoint)
             .build()
-            .map_err(|e| crate::Error::OtelInit(Box::new(e))),
+            .map_err(crate::Error::OtelInit),
 
         // http/protobuf, http/json, or anything else — use HTTP transport
         _ => opentelemetry_otlp::SpanExporter::builder()
             .with_http()
             .with_endpoint(endpoint)
             .build()
-            .map_err(|e| crate::Error::OtelInit(Box::new(e))),
+            .map_err(crate::Error::OtelInit),
     }
 }

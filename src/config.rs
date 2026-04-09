@@ -116,13 +116,11 @@ const MERGE_DEPTH_LIMIT: usize = 64;
 ///
 /// # Errors
 ///
-/// Returns [`Error::ConfigDeserialize`] if the nesting depth exceeds 64 levels.
+/// Returns [`Error::ConfigMergeDepth`] if the nesting depth exceeds 64 levels.
 pub fn deep_merge(base: &mut Value, overlay: Value) -> Result<()> {
     fn merge_inner(base: &mut Value, overlay: Value, depth: usize) -> Result<()> {
         if depth > MERGE_DEPTH_LIMIT {
-            return Err(crate::Error::ConfigDeserialize(
-                format!("config nesting exceeds {MERGE_DEPTH_LIMIT} levels").into(),
-            ));
+            return Err(crate::Error::ConfigMergeDepth);
         }
         match (base, overlay) {
             (Value::Object(base_map), Value::Object(overlay_map)) => {
@@ -147,9 +145,9 @@ pub fn deep_merge(base: &mut Value, overlay: Value) -> Result<()> {
 pub fn parse_toml(content: &str) -> Result<Value> {
     let toml_value: toml::Value = toml::from_str(content).map_err(|e| Error::ConfigParse {
         path: "<toml>".to_string(),
-        source: Box::new(e),
+        source: Box::new(e.into()),
     })?;
-    serde_json::to_value(toml_value).map_err(|e| Error::ConfigDeserialize(Box::new(e)))
+    serde_json::to_value(toml_value).map_err(Error::ConfigDeserialize)
 }
 
 /// Parse YAML content into a `serde_json::Value`.
@@ -160,7 +158,7 @@ pub fn parse_toml(content: &str) -> Result<Value> {
 pub fn parse_yaml(content: &str) -> Result<Value> {
     serde_saphyr::from_str(content).map_err(|e| Error::ConfigParse {
         path: "<yaml>".to_string(),
-        source: Box::new(e),
+        source: Box::new(e.into()),
     })
 }
 
@@ -172,7 +170,7 @@ pub fn parse_yaml(content: &str) -> Result<Value> {
 pub fn parse_json(content: &str) -> Result<Value> {
     serde_json::from_str(content).map_err(|e| Error::ConfigParse {
         path: "<json>".to_string(),
-        source: Box::new(e),
+        source: Box::new(e.into()),
     })
 }
 
@@ -184,7 +182,7 @@ pub fn parse_json(content: &str) -> Result<Value> {
 pub fn parse_file(path: &Utf8Path) -> Result<Value> {
     let content = std::fs::read_to_string(path.as_str()).map_err(|e| Error::ConfigParse {
         path: path.to_string(),
-        source: Box::new(e),
+        source: Box::new(e.into()),
     })?;
 
     match path.extension() {
@@ -278,8 +276,7 @@ impl ConfigLoader {
         self,
     ) -> Result<(C, ConfigSources)> {
         tracing::debug!("loading configuration");
-        let mut merged = serde_json::to_value(C::default())
-            .map_err(|e| Error::ConfigDeserialize(Box::new(e)))?;
+        let mut merged = serde_json::to_value(C::default()).map_err(Error::ConfigDeserialize)?;
         let mut sources = ConfigSources::default();
 
         // User config (lowest precedence of file sources)
@@ -310,8 +307,7 @@ impl ConfigLoader {
         }
         sources.explicit_files = self.explicit_files;
 
-        let config: C =
-            serde_json::from_value(merged).map_err(|e| Error::ConfigDeserialize(Box::new(e)))?;
+        let config: C = serde_json::from_value(merged).map_err(Error::ConfigDeserialize)?;
         tracing::info!("configuration loaded");
         Ok((config, sources))
     }

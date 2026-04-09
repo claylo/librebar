@@ -337,7 +337,7 @@ impl BuilderInner {
                 .with(filter)
                 .with(log_layer)
                 .try_init()
-                .map_err(|e| Error::TracingInit(Box::new(e)))?;
+                .map_err(Error::TracingInit)?;
         }
 
         #[cfg(all(feature = "logging", feature = "otel"))]
@@ -357,7 +357,7 @@ impl BuilderInner {
             tracing_subscriber::registry()
                 .with(layers)
                 .try_init()
-                .map_err(|e| Error::TracingInit(Box::new(e)))?;
+                .map_err(Error::TracingInit)?;
         }
 
         #[cfg(feature = "shutdown")]

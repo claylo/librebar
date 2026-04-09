@@ -23,7 +23,8 @@ use http_body_util::{BodyExt, Empty};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioExecutor;
 
-use crate::{Error, Result};
+use crate::Result;
+use crate::error::HttpError;
 
 // ─── Config ─────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ impl HttpClient {
     pub fn new(config: HttpClientConfig) -> Result<Self> {
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-            .map_err(|e| Error::Http(Box::new(std::io::Error::other(e))))?
+            .map_err(HttpError::Tls)?
             .https_or_http()
             .enable_all_versions()
             .build();
@@ -105,23 +106,17 @@ impl HttpClient {
     ///   timeout, or I/O error while reading the response body.
     #[tracing::instrument(skip(self), fields(url = %url))]
     pub async fn get(&self, url: &str) -> Result<Response> {
-        let uri: hyper::Uri = url
-            .parse()
-            .map_err(|e: hyper::http::uri::InvalidUri| Error::Http(Box::new(e)))?;
+        let uri: hyper::Uri = url.parse().map_err(HttpError::InvalidUrl)?;
 
         let req = hyper::Request::builder()
             .method(hyper::Method::GET)
             .uri(&uri)
             .header(hyper::header::USER_AGENT, &self.config.user_agent)
             .body(Empty::<Bytes>::new())
-            .map_err(|e| Error::Http(Box::new(e)))?;
+            .map_err(HttpError::RequestBuild)?;
 
         let whole_request = async {
-            let resp = self
-                .inner
-                .request(req)
-                .await
-                .map_err(|e| Error::Http(Box::new(e)))?;
+            let resp = self.inner.request(req).await.map_err(HttpError::Request)?;
 
             let status = resp.status().as_u16();
             tracing::debug!(status, "response received");
@@ -130,7 +125,7 @@ impl HttpClient {
                 .into_body()
                 .collect()
                 .await
-                .map_err(|e| Error::Http(Box::new(e)))?
+                .map_err(HttpError::Body)?
                 .to_bytes();
 
             Ok(Response {
@@ -142,10 +137,10 @@ impl HttpClient {
         tokio::time::timeout(self.config.timeout, whole_request)
             .await
             .map_err(|_| {
-                Error::Http(Box::new(std::io::Error::new(
+                HttpError::Io(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     format!("request timed out after {:?}", self.config.timeout),
-                )))
+                ))
             })?
     }
 
@@ -203,7 +198,7 @@ impl Response {
     /// Returns [`Error::Http`] if the body is not valid JSON or cannot
     /// be deserialized into `T`.
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> crate::Result<T> {
-        serde_json::from_slice(&self.body).map_err(|e| crate::Error::Http(Box::new(e)))
+        serde_json::from_slice(&self.body).map_err(|e| HttpError::Json(e).into())
     }
 
     /// Return the raw response body bytes.
