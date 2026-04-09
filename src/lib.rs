@@ -84,7 +84,7 @@ pub mod dispatch;
 #[cfg(feature = "diagnostics")]
 pub mod diagnostics;
 
-#[cfg(feature = "bench")]
+#[cfg(any(feature = "bench", feature = "bench-gungraun"))]
 pub mod bench;
 
 #[cfg(feature = "logging")]

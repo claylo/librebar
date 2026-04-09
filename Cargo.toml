@@ -74,8 +74,11 @@ which = { version = "7.0", optional = true }
 flate2 = { version = "1.1", optional = true }
 tar = { version = "0.4", optional = true }
 
-# Feature: bench
+# Feature: bench (wall-clock via divan)
 divan = { version = "0.1", optional = true }
+
+# Feature: bench-gungraun (instruction-count via Valgrind/Callgrind)
+gungraun = { version = "0.17", optional = true }
 
 [dev-dependencies]
 tempfile = "3.27"
@@ -98,6 +101,7 @@ update = ["http", "cache", "dep:serde_json"]
 dispatch = ["cli", "dep:which"]
 diagnostics = ["config", "logging", "dep:flate2", "dep:tar"]
 bench = ["dep:divan"]
+bench-gungraun = ["dep:gungraun"]
 
 [lints.rust]
 # Use "deny" instead of "forbid" to allow benchmark harnesses to override
