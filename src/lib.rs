@@ -102,6 +102,7 @@ pub use error::{Error, Result};
 /// `C` is the user's config type (defaults to `()` when config is not used).
 pub struct App<C = ()> {
     app_name: String,
+    version: String,
     config: C,
     #[cfg(feature = "config")]
     config_sources: config::ConfigSources,
@@ -124,6 +125,11 @@ impl<C> App<C> {
     /// Returns the application name.
     pub fn app_name(&self) -> &str {
         &self.app_name
+    }
+
+    /// Returns the application version.
+    pub fn version(&self) -> &str {
+        &self.version
     }
 }
 
@@ -174,6 +180,7 @@ impl<C> App<C> {
 pub fn init(app_name: &str) -> Builder {
     Builder {
         app_name: app_name.to_string(),
+        version: None,
         #[cfg(feature = "cli")]
         cli: None,
         #[cfg(feature = "logging")]
@@ -195,6 +202,7 @@ pub fn init(app_name: &str) -> Builder {
 /// initialization order.
 pub struct Builder {
     app_name: String,
+    version: Option<String>,
     #[cfg(feature = "cli")]
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
@@ -252,6 +260,14 @@ impl Builder {
         self
     }
 
+    /// Set the application version for crash dumps and OTEL resource attributes.
+    ///
+    /// If not set, crash and OTEL use the rebar crate version.
+    pub fn with_version(mut self, version: &str) -> Self {
+        self.version = Some(version.to_string());
+        self
+    }
+
     /// Finalize initialization without config.
     ///
     /// Returns `App<()>`. Use [`config_from_file`](Self::config_from_file)
@@ -266,6 +282,9 @@ impl Builder {
         let cli_flags = self.cli_flags();
         #[cfg(feature = "logging")]
         let do_logging = self.enable_logging;
+        let app_version = self
+            .version
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
         // Build layers
         #[cfg(feature = "logging")]
@@ -280,8 +299,7 @@ impl Builder {
 
         #[cfg(feature = "otel")]
         let (otel_layer, otel_guard) = if self.enable_otel {
-            let otel_cfg =
-                otel::OtelConfig::from_app_name(&self.app_name, env!("CARGO_PKG_VERSION"));
+            let otel_cfg = otel::OtelConfig::from_app_name(&self.app_name, &app_version);
             otel::build_otel_layer(&otel_cfg)?
         } else {
             (None, None)
@@ -330,11 +348,12 @@ impl Builder {
 
         #[cfg(feature = "crash")]
         if self.enable_crash {
-            crash::install(&self.app_name, env!("CARGO_PKG_VERSION"));
+            crash::install(&self.app_name, &app_version);
         }
 
         Ok(App {
             app_name: self.app_name,
+            version: app_version,
             config: (),
             #[cfg(feature = "config")]
             config_sources: config::ConfigSources::default(),
@@ -376,6 +395,7 @@ impl Builder {
     {
         ConfiguredBuilder {
             app_name: self.app_name,
+            version: self.version,
             #[cfg(feature = "cli")]
             cli: self.cli,
             #[cfg(feature = "logging")]
@@ -401,6 +421,7 @@ impl Builder {
     {
         ConfiguredBuilder {
             app_name: self.app_name,
+            version: self.version,
             #[cfg(feature = "cli")]
             cli: self.cli,
             #[cfg(feature = "logging")]
@@ -426,6 +447,7 @@ impl Builder {
     {
         ConfiguredBuilder {
             app_name: self.app_name,
+            version: self.version,
             #[cfg(feature = "cli")]
             cli: self.cli,
             #[cfg(feature = "logging")]
@@ -464,6 +486,7 @@ enum CfgSource<C> {
 #[cfg(feature = "config")]
 pub struct ConfiguredBuilder<C> {
     app_name: String,
+    version: Option<String>,
     #[cfg(feature = "cli")]
     cli: Option<cli::CommonArgs>,
     #[cfg(feature = "logging")]
@@ -523,6 +546,14 @@ impl<C> ConfiguredBuilder<C> {
         self
     }
 
+    /// Set the application version for crash dumps and OTEL resource attributes.
+    ///
+    /// If not set, crash and OTEL use the rebar crate version.
+    pub fn with_version(mut self, version: &str) -> Self {
+        self.version = Some(version.to_string());
+        self
+    }
+
     #[cfg(all(feature = "logging", feature = "cli"))]
     fn cli_flags(&self) -> (bool, u8) {
         self.cli
@@ -556,6 +587,9 @@ where
         let do_otel = self.enable_otel;
         #[cfg(feature = "shutdown")]
         let do_shutdown = self.enable_shutdown;
+        let app_version = self
+            .version
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
         let (config, sources) = match self.config_source {
             CfgSource::Discover => {
@@ -593,8 +627,7 @@ where
 
         #[cfg(feature = "otel")]
         let (otel_layer, otel_guard) = if do_otel {
-            let otel_cfg =
-                otel::OtelConfig::from_app_name(&self.app_name, env!("CARGO_PKG_VERSION"));
+            let otel_cfg = otel::OtelConfig::from_app_name(&self.app_name, &app_version);
             otel::build_otel_layer(&otel_cfg)?
         } else {
             (None, None)
@@ -643,11 +676,12 @@ where
 
         #[cfg(feature = "crash")]
         if self.enable_crash {
-            crash::install(&self.app_name, env!("CARGO_PKG_VERSION"));
+            crash::install(&self.app_name, &app_version);
         }
 
         Ok(App {
             app_name: self.app_name,
+            version: app_version,
             config,
             config_sources: sources,
             #[cfg(feature = "cli")]
