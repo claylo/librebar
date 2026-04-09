@@ -101,10 +101,7 @@ impl UpdateChecker {
         }
 
         // Fetch from GitHub
-        let url = format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            self.repo
-        );
+        let url = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
         let client =
             crate::http::HttpClient::from_app(&self.app_name, &self.current_version).ok()?;
 
@@ -136,10 +133,7 @@ impl UpdateChecker {
     }
 
     fn compare_versions(&self, latest: &str) -> Option<UpdateInfo> {
-        let url = format!(
-            "https://github.com/{}/releases/tag/v{}",
-            self.repo, latest
-        );
+        let url = format!("https://github.com/{}/releases/tag/v{}", self.repo, latest);
         self.compare_versions_with_url(latest, &url)
     }
 
@@ -162,9 +156,7 @@ impl UpdateChecker {
 /// Handles `major.minor.patch` format. Non-numeric segments
 /// are treated as 0.
 pub fn is_newer(current: &str, latest: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> {
-        v.split('.').map(|s| s.parse().unwrap_or(0)).collect()
-    };
+    let parse = |v: &str| -> Vec<u64> { v.split('.').map(|s| s.parse().unwrap_or(0)).collect() };
 
     let curr = parse(current);
     let lat = parse(latest);
