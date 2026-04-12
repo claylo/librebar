@@ -12,14 +12,14 @@ use tempfile::TempDir;
 #[test]
 fn merge_scalar_override() {
     let mut base = json!({"level": "info"});
-    rebar::config::deep_merge(&mut base, json!({"level": "debug"}));
+    rebar::config::deep_merge(&mut base, json!({"level": "debug"})).unwrap();
     assert_eq!(base["level"], "debug");
 }
 
 #[test]
 fn merge_nested_objects() {
     let mut base = json!({"logging": {"level": "info", "dir": "/var/log"}});
-    rebar::config::deep_merge(&mut base, json!({"logging": {"level": "debug"}}));
+    rebar::config::deep_merge(&mut base, json!({"logging": {"level": "debug"}})).unwrap();
     assert_eq!(base["logging"]["level"], "debug");
     assert_eq!(base["logging"]["dir"], "/var/log"); // preserved
 }
@@ -27,22 +27,39 @@ fn merge_nested_objects() {
 #[test]
 fn merge_array_replaces() {
     let mut base = json!({"tags": ["a", "b"]});
-    rebar::config::deep_merge(&mut base, json!({"tags": ["c"]}));
+    rebar::config::deep_merge(&mut base, json!({"tags": ["c"]})).unwrap();
     assert_eq!(base["tags"], json!(["c"]));
 }
 
 #[test]
 fn merge_adds_new_keys() {
     let mut base = json!({"a": 1});
-    rebar::config::deep_merge(&mut base, json!({"b": 2}));
+    rebar::config::deep_merge(&mut base, json!({"b": 2})).unwrap();
     assert_eq!(base, json!({"a": 1, "b": 2}));
 }
 
 #[test]
 fn merge_null_overlay_replaces() {
     let mut base = json!({"a": 1});
-    rebar::config::deep_merge(&mut base, json!({"a": null}));
+    rebar::config::deep_merge(&mut base, json!({"a": null})).unwrap();
     assert!(base["a"].is_null());
+}
+
+#[test]
+fn merge_rejects_excessive_depth() {
+    // Both sides must be deeply-nested objects with matching keys:
+    // merge_inner only increments depth through the (Object, Object) match arm.
+    // If the base key is absent, entry().or_insert(Null) short-circuits via the
+    // default `*base = overlay` branch and the depth guard never fires.
+    let mut base = json!("bottom");
+    let mut overlay = json!("bottom");
+    for _ in 0..=64 {
+        base = json!({ "k": base });
+        overlay = json!({ "k": overlay });
+    }
+
+    let err = rebar::config::deep_merge(&mut base, overlay).unwrap_err();
+    assert!(matches!(err, rebar::Error::ConfigMergeDepth));
 }
 
 // ─── file parsing tests ─────────────────────────────────────────────
@@ -91,7 +108,7 @@ fn merge_and_deserialize() {
     let overlay = r#"custom_field = "hello""#;
 
     let mut merged = rebar::config::parse_toml(base).unwrap();
-    rebar::config::deep_merge(&mut merged, rebar::config::parse_toml(overlay).unwrap());
+    rebar::config::deep_merge(&mut merged, rebar::config::parse_toml(overlay).unwrap()).unwrap();
 
     let config: TestConfig = serde_json::from_value(merged).unwrap();
     assert_eq!(config.log_level, rebar::config::LogLevel::Info);

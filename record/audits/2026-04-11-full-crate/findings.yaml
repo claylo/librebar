@@ -1,0 +1,282 @@
+---
+audit_date: 2026-04-11
+scope: "Full repository audit — src/, tests/, Cargo.toml, feature-gated validation, and dependency tree"
+commit: 77836b5443c8ad4db5a63564d4339f09ea4ad346
+assessment: |
+  rebar is in good shape at the library surface: `#![deny(unsafe_code)]` holds,
+  `cargo clippy --all-targets -- -D warnings` passes, `cargo deny check -c .config/deny.toml`
+  passes, and the core modules show deliberate feature gating with typed errors and
+  lightweight tests. The main weakness is no longer in runtime code but in verification:
+  the full feature matrix on `main` does not currently compile because tests drifted after
+  API changes in `diagnostics` and `config`. That means the repository's broadest validation
+  command catches regressions only after a release candidate style build, not continuously.
+  The supply-chain story is mostly clean, but `cargo audit` still reports two upstream RustSec
+  warnings living behind optional features: `rand` in the OTEL stack and unmaintained `bincode`
+  via the gungraun benchmark feature. Overall posture: solid crate architecture with a short,
+  concrete remediation list centered on restoring trustworthy all-features verification.
+
+narratives:
+  - slug: feature-matrix-verification
+    title: "The Feature-Matrix Verification Surface"
+    thesis: "The library code compiles cleanly in the default configuration, but the all-features validation path has drifted behind public API changes and no longer proves the advertised surface."
+    verdict: "This is the highest-value fix in the repository. The diagnostics test is a hard stop because `cargo test --workspace --all-features` does not compile on `main`; the config tests are a quieter form of the same problem, still exercising the pre-change `deep_merge` contract even though the function is now fallible. Until these tests are updated, the broad feature matrix is more aspirational than verified."
+
+    flow:
+      - id: change-api
+        label: "Change public API"
+        type: start
+      - id: compile-feature-tests
+        label: "Compile all-features tests"
+        type: process
+      - id: diagnostics-current
+        label: "Diagnostics tests match API?"
+        type: decision
+        no: diagnostics-drift
+      - id: config-current
+        label: "Config tests handle Result?"
+        type: decision
+        no: config-drift
+      - id: confidence
+        label: "Trust feature matrix"
+        type: end
+      - id: diagnostics-drift
+        label: "Old builder-style call remains"
+        type: process
+        spine: false
+        findings:
+          - slug: diagnostics-test-api-drift
+            label: "Compile break"
+        next: config-current
+      - id: config-drift
+        label: "Fallible merge ignored"
+        type: process
+        spine: false
+        findings:
+          - slug: config-tests-ignore-deep-merge-errors
+            label: "Warnings hide drift"
+
+    findings:
+      - slug: diagnostics-test-api-drift
+        title: "The all-features test suite no longer compiles after the DebugBundle API change"
+        concern: significant
+        locations:
+          - path: tests/diagnostics_test.rs
+            start_line: 74
+            end_line: 79
+        evidence: |
+          fn debug_bundle_creates_archive() {
+              let tmp = TempDir::new().unwrap();
+              let mut bundle = DebugBundle::new("test-app", tmp.path());
+
+              bundle.add_text("info.txt", "test content").unwrap();
+              let archive_path = bundle.finish().unwrap();
+        evidence_markers:
+          - lines: "5"
+            type: del
+            label: "add_text() now returns &mut Self, not Result"
+        mechanism: |
+          `DebugBundle::add_text()` was intentionally changed from `Result<()>` to `&mut Self`
+          for chaining, but `tests/diagnostics_test.rs` still calls `.unwrap()` on the return value.
+          That stale call is enough to break the repository's broadest validation command:
+          `cargo test --workspace --all-features` currently stops at this file with
+          `error[E0599]: no method named 'unwrap' found for mutable reference '&mut DebugBundle'`.
+          For a feature-gated foundation crate, a broken all-features build means the public surface
+          is no longer continuously verified as one coherent product.
+        remediation: |
+          Update the test to use the builder-style API directly:
+          `bundle.add_text("info.txt", "test content");`
+          Then rerun `cargo test --workspace --all-features` so the rest of the feature matrix can
+          compile and execute. Any other tests written against the pre-refactor `Result<()>` contract
+          should be updated in the same pass.
+        temporal:
+          introduced: 2026-04-09
+          last_modified: 2026-04-09
+          commit_count: 1
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,1]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [config-tests-ignore-deep-merge-errors]
+        effort: trivial
+        effort_notes: "One-line test fix, then rerun the full feature matrix"
+
+      - slug: config-tests-ignore-deep-merge-errors
+        title: "Config regression tests still exercise the pre-fallible deep_merge contract"
+        concern: moderate
+        locations:
+          - path: tests/config_test.rs
+            start_line: 13
+            end_line: 16
+          - path: tests/config_test.rs
+            start_line: 89
+            end_line: 96
+        evidence: |
+          fn merge_scalar_override() {
+              let mut base = json!({"level": "info"});
+              rebar::config::deep_merge(&mut base, json!({"level": "debug"}));
+              assert_eq!(base["level"], "debug");
+          }
+        evidence_markers:
+          - lines: "3"
+            type: del
+            label: "deep_merge() now returns Result<()> but the test ignores it"
+        mechanism: |
+          `deep_merge()` was hardened to return `Result<()>` once the merge-depth limit was added,
+          but the config test suite still treats it as infallible. Under `cargo test --workspace --all-features --test config_test`,
+          Rust emits six `unused Result that must be used` warnings from this file, including the
+          higher-value merge-and-deserialize path. The tests still happen to pass because the current
+          inputs are shallow and valid, but the suite is no longer asserting the behavior that matters:
+          that successful merges stay successful and bounded merges fail explicitly.
+        remediation: |
+          Update every `deep_merge(...)` call in `tests/config_test.rs` to handle the result explicitly,
+          usually with `.unwrap()` for success-path tests. Add one negative test that constructs a deeply
+          nested overlay and asserts `Err(rebar::Error::ConfigMergeDepth)` so the new contract is exercised,
+          not just tolerated.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-08
+          commit_count: 3
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,3]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [diagnostics-test-api-drift]
+        effort: trivial
+        effort_notes: "Small test-only change plus one negative case"
+
+  - slug: optional-feature-supply-chain
+    title: "The Optional-Feature Supply Chain Surface"
+    thesis: "The default crate surface is dependency-disciplined, but two optional features currently pull upstream RustSec warnings that should be either upgraded away or documented as accepted risk."
+    verdict: "This is not a default-install emergency. `cargo deny check -c .config/deny.toml` passes and there are no hard vulnerability failures in the resolved tree. The remaining issues are feature-scoped warnings: the benchmark-only gungraun path carries unmaintained `bincode`, and the OTEL stack carries a fresh `rand` warning. Both are manageable, but leaving them untracked means the next dependency review starts from rediscovery instead of policy."
+
+    flow:
+      - id: enable-optional
+        label: "Enable optional feature"
+        type: start
+      - id: choose-surface
+        label: "OTEL or bench-gungraun?"
+        type: decision
+      - id: resolve-tree
+        label: "Resolve transitive crates"
+        type: process
+      - id: rustsec-scan
+        label: "Run cargo audit"
+        type: process
+      - id: warning-state
+        label: "Any upstream warnings?"
+        type: decision
+        no: clean-optional
+      - id: track-risk
+        label: "Upgrade or accept with rationale"
+        type: end
+      - id: clean-optional
+        label: "Optional surface stays clean"
+        type: end
+        spine: false
+      - id: otel-warning
+        label: "OTEL pulls rand warning"
+        type: process
+        spine: false
+        findings:
+          - slug: otel-feature-pulls-rand-rustsec-warning
+            label: "rand warning"
+        next: track-risk
+      - id: bench-warning
+        label: "Bench feature pulls bincode warning"
+        type: process
+        spine: false
+        findings:
+          - slug: bench-gungraun-pulls-unmaintained-bincode
+            label: "bincode warning"
+        next: track-risk
+
+    findings:
+      - slug: otel-feature-pulls-rand-rustsec-warning
+        title: "The OTEL feature currently brings in a RustSec warning on rand 0.9.2"
+        concern: advisory
+        locations:
+          - path: Cargo.toml
+            start_line: 50
+            end_line: 53
+          - path: Cargo.toml
+            start_line: 96
+            end_line: 97
+        evidence: |
+          # Feature: otel
+          opentelemetry = { version = "0.31", features = ["trace"], optional = true }
+          opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"], optional = true }
+          opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "hyper-client", "trace"], optional = true }
+        evidence_markers:
+          - lines: "2-4"
+            type: mark
+            label: "Enabling OTEL brings in the audited stack"
+        mechanism: |
+          An escalated `cargo audit` on the current lockfile reports `RUSTSEC-2026-0097`:
+          `rand 0.9.2` is marked unsound with a custom logger using `rand::rng()`. In this tree the
+          warning is not on the default crate surface; it enters through `opentelemetry_sdk` when the
+          `otel` feature is enabled. That makes this a policy and maintenance issue rather than an
+          immediate exploit path, but it is still supply-chain debt on an advertised feature. If OTEL
+          users enable the feature assuming "audit clean" means warning-free, the repository currently
+          overpromises.
+        remediation: |
+          Track the upstream fix and bump the OTEL stack once a patched `rand` lands transitively.
+          If the advisory is determined not to affect rebar's usage pattern, add a documented ignore
+          entry with rationale in the dependency-audit policy rather than leaving the warning implicit.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 13
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,13]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [bench-gungraun-pulls-unmaintained-bincode]
+        effort: medium
+        effort_notes: "Likely waits on upstream crate releases or a documented policy exception"
+
+      - slug: bench-gungraun-pulls-unmaintained-bincode
+        title: "The benchmark-only gungraun feature inherits an unmaintained bincode dependency"
+        concern: advisory
+        locations:
+          - path: Cargo.toml
+            start_line: 82
+            end_line: 83
+          - path: Cargo.toml
+            start_line: 105
+            end_line: 106
+        evidence: |
+          # Feature: bench-gungraun (instruction-count via Valgrind/Callgrind)
+          gungraun = { version = "0.17", optional = true }
+        evidence_markers:
+          - lines: "2"
+            type: mark
+            label: "Benchmark feature opts into the warned transitive dependency"
+        mechanism: |
+          The same escalated `cargo audit` run reports `RUSTSEC-2025-0141`: `bincode 1.3.3` is
+          unmaintained and reaches this repository through `gungraun 0.17.2`. Because `bench-gungraun`
+          is a dev-facing optional feature, this is not a runtime risk for ordinary consumers of rebar.
+          It is still a repository-owned maintenance edge: benchmark helpers are part of the public
+          crate surface, and anyone enabling that feature inherits a dependency with no active steward.
+        remediation: |
+          Check whether a newer `gungraun` release removes the `bincode` edge. If not, document the
+          feature as carrying an accepted benchmark-only warning or consider demoting it to out-of-tree
+          benchmark guidance rather than a first-class crate feature.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-04-09
+          commit_count: 13
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,13]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [otel-feature-pulls-rand-rustsec-warning]
+        effort: small
+        effort_notes: "Depends on upstream gungraun packaging decisions more than local code"
+
+summary:
+  counts:
+    critical: 0
+    significant: 1
+    moderate: 1
+    advisory: 2
+    note: 0

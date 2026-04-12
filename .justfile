@@ -21,10 +21,10 @@ deny:
   cargo deny check --config .config/deny.toml
 
 test:
-  cargo nextest run
+  cargo nextest run --workspace --all-features
 
 test-ci:
-  cargo nextest run --profile ci
+  cargo nextest run --workspace --all-features --profile ci
 
 doc-test:
   cargo test --doc
