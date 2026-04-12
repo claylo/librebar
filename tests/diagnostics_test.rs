@@ -75,7 +75,7 @@ fn debug_bundle_creates_archive() {
     let tmp = TempDir::new().unwrap();
     let mut bundle = DebugBundle::new("test-app", tmp.path());
 
-    bundle.add_text("info.txt", "test content").unwrap();
+    bundle.add_text("info.txt", "test content");
     let archive_path = bundle.finish().unwrap();
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".tar.gz"));
