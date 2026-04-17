@@ -2,6 +2,14 @@
 #![cfg(feature = "update")]
 
 use librebar::update::{UpdateChecker, UpdateInfo};
+use std::sync::Mutex;
+
+// Process-global env vars are shared across threads. nextest sidesteps this
+// by running each test in its own process, but `cargo test` runs them on
+// threads within one process — a mutation in one test will race with a read
+// in another. This file-level lock serializes the tests that touch env so
+// the suite works under either runner.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn checker_from_app_name() {
@@ -12,16 +20,19 @@ fn checker_from_app_name() {
 
 #[test]
 fn suppressed_by_env_var() {
-    // SAFETY: nextest runs each test in its own process
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: ENV_LOCK serializes env-touching tests in this file.
     unsafe { std::env::set_var("TEST_APP_NO_UPDATE_CHECK", "1") };
     let checker = UpdateChecker::new("test-app", "0.1.0", "owner/repo");
     assert!(checker.is_suppressed());
+    // SAFETY: still holding ENV_LOCK.
     unsafe { std::env::remove_var("TEST_APP_NO_UPDATE_CHECK") };
 }
 
 #[test]
 fn not_suppressed_by_default() {
-    // SAFETY: nextest runs each test in its own process
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: ENV_LOCK serializes env-touching tests in this file.
     unsafe { std::env::remove_var("TEST_APP_NO_UPDATE_CHECK") };
     let checker = UpdateChecker::new("test-app", "0.1.0", "owner/repo");
     assert!(!checker.is_suppressed());

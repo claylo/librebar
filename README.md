@@ -281,6 +281,62 @@ let app = librebar::init("myapp")
     .start()?;
 ```
 
+## Testing
+
+The default test suite runs fully offline and finishes in under a second:
+
+```sh
+just check       # fmt + clippy (--all-features) + deny + nextest + doc-tests
+just test        # just the nextest run, if you want to skip linting
+```
+
+### Opt-in network tests
+
+Two tests in `tests/http_test.rs` hit the public internet
+(`api.github.com/zen`, `httpbin.org/get`) and are marked `#[ignore]` so
+they don't pretend to pass when they haven't actually run. Opt in with:
+
+```sh
+# Run only the ignored tests (nextest):
+cargo nextest run --all-features --run-ignored only --test http_test
+
+# Or with the stock runner:
+cargo test --all-features --test http_test -- --ignored
+```
+
+### End-to-end OTEL export
+
+The `otel` feature builds an OTLP/HTTP exporter that lights up whenever
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set to a non-empty value. To watch spans
+arrive from the `service` example, stand up a receiver. The .NET Aspire
+Dashboard bundles an OTLP/HTTP ingestor plus a unified UI for logs,
+traces, and metrics in a single image:
+
+```sh
+# Start the dashboard (UI on 18888, OTLP/HTTP ingestor on 18890):
+docker run --rm -d -p 18888:18888 \
+    -e DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL=http://0.0.0.0:18890 \
+    -p 18890:18890 \
+    mcr.microsoft.com/dotnet/aspire-dashboard:latest
+
+# Run the service with export enabled:
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:18890 \
+    cargo run --example service \
+    --features "cli,config,logging,shutdown,crash,otel" \
+    -- -C examples run
+
+# Open the UI; spans from the `service` service show up under that name:
+#   http://localhost:18888
+#
+# First-launch login token is printed to the container logs:
+#   docker logs $(docker ps -q --filter ancestor=mcr.microsoft.com/dotnet/aspire-dashboard)
+```
+
+Any OTLP/HTTP receiver works the same way — Jaeger's `all-in-one` image,
+the OpenTelemetry Collector, or commercial backends (Honeycomb, Grafana
+Cloud, etc.). Point `OTEL_EXPORTER_OTLP_ENDPOINT` at their ingest URL and
+spans flow.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

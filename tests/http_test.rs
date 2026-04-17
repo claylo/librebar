@@ -1,13 +1,18 @@
 #![allow(missing_docs)]
 #![cfg(feature = "http")]
 
+// Tests marked `#[ignore]` hit the public internet. The default `just test`
+// run skips them (nextest reports them as "skipped" rather than claiming a
+// silent pass). Run them explicitly with:
+//
+//     cargo nextest run --all-features --run-ignored only
+//
+// or, under the stock runner:
+//
+//     cargo test --all-features -- --ignored
+
 use librebar::http::{HttpClient, HttpClientConfig};
 use std::time::Duration;
-
-/// Run with `REBAR_TEST_NETWORK=1 cargo nextest run` to enable network tests.
-fn network_tests_enabled() -> bool {
-    std::env::var("REBAR_TEST_NETWORK").is_ok()
-}
 
 #[test]
 fn client_config_defaults() {
@@ -36,10 +41,8 @@ fn client_construction() {
 }
 
 #[tokio::test]
+#[ignore = "hits api.github.com; run with --run-ignored or `-- --ignored`"]
 async fn https_get_succeeds() {
-    if !network_tests_enabled() {
-        return;
-    }
     let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
     let resp = client
         .get("https://api.github.com/zen")
@@ -54,10 +57,8 @@ async fn https_get_succeeds() {
 }
 
 #[tokio::test]
+#[ignore = "hits httpbin.org; run with --run-ignored or `-- --ignored`"]
 async fn http_get_succeeds() {
-    if !network_tests_enabled() {
-        return;
-    }
     let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
     let resp = client
         .get("http://httpbin.org/get")
