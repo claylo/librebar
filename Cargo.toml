@@ -100,6 +100,16 @@ required-features = ["cli", "config", "logging", "shutdown", "crash", "otel"]
 name = "updater"
 required-features = ["cli", "config", "logging", "http", "cache", "update"]
 
+[[example]]
+name = "plugin-cli"
+path = "examples/plugin-cli/main.rs"
+required-features = ["cli", "config", "logging", "dispatch"]
+
+[[example]]
+name = "plugin-cli-hello-greet"
+path = "examples/plugin-cli/hello-greet/main.rs"
+required-features = ["cli"]
+
 [features]
 cli = ["dep:clap", "dep:owo-colors"]
 config = ["dep:toml", "dep:serde-saphyr", "dep:serde_json", "dep:camino", "dep:directories"]

@@ -12,6 +12,7 @@ Every example is a full `main()` you can read top-to-bottom.
 | [`minimal`](minimal.rs) | Smallest idiomatic librebar app: flags, config, structured logs | `cli`, `config`, `logging` |
 | [`service`](service.rs) | Long-running async service: shutdown token, crash dumps, optional OTEL export | `cli`, `config`, `logging`, `shutdown`, `crash`, `otel` |
 | [`updater`](updater.rs) | GitHub releases check: real HTTPS call, 24h cache, `{APP}_NO_UPDATE_CHECK` gate | `cli`, `config`, `logging`, `http`, `cache`, `update` |
+| [`plugin-cli`](plugin-cli/main.rs) | Git-style external subcommand dispatch with a paired plugin binary | `cli`, `config`, `logging`, `dispatch` |
 
 ## Running
 
@@ -24,6 +25,18 @@ cargo run --example service \
     --features "cli,config,logging,shutdown,crash,otel" -- --help
 cargo run --example updater \
     --features "cli,config,logging,http,cache,update" -- --help
+cargo run --example plugin-cli \
+    --features "cli,config,logging,dispatch" -- --help
+```
+
+The `plugin-cli` example ships two binaries — the main CLI plus a paired
+`plugin-cli-hello-greet` plugin. Build both at once and prepend the
+examples directory to PATH so dispatch resolves:
+
+```sh
+cargo build --examples --features "cli,config,logging,dispatch"
+PATH="$(pwd)/target/debug/examples:$PATH" \
+    ./target/debug/examples/plugin-cli -C examples/plugin-cli hello-greet --name Clay
 ```
 
 Config discovery walks up from the current directory, so the sample `.toml`
