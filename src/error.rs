@@ -3,7 +3,12 @@
 use thiserror::Error;
 
 /// Errors that can occur during librebar initialization and operation.
+///
+/// This enum is `#[non_exhaustive]`: downstream `match` expressions must include
+/// a wildcard arm, which allows future librebar releases to add variants
+/// without a breaking change. See the README's "Versioning" section.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Configuration file could not be parsed.
     #[cfg(feature = "config")]
@@ -93,6 +98,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Errors from the HTTP client.
 #[cfg(feature = "http")]
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum HttpError {
     /// TLS provider initialization failed.
     #[error("TLS: {0}")]
@@ -120,6 +126,7 @@ pub enum HttpError {
 /// Errors from the file cache.
 #[cfg(feature = "cache")]
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum CacheError {
     /// Filesystem I/O error.
     #[error("{0}")]
@@ -135,6 +142,7 @@ pub enum CacheError {
 /// Errors from config file parsing.
 #[cfg(feature = "config")]
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ConfigParseError {
     /// TOML parse error.
     #[error("{0}")]
