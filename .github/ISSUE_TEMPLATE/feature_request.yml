@@ -1,0 +1,67 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea to make librebar better? We'd love to hear it!
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point
+      placeholder: I often find myself manually wiring X because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you think this should work?
+      placeholder: |
+        It would be great if librebar could...
+
+        Example usage:
+        ```rust
+        let app = librebar::init("myapp")
+            .your_new_method()
+            .start()?;
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you've thought about?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: What area does this affect?
+      options:
+        - Builder API
+        - CLI (`cli` feature)
+        - Config (`config` feature)
+        - Logging (`logging` feature)
+        - Shutdown / crash handling
+        - HTTP / cache / update
+        - OpenTelemetry (`otel` / `otel-grpc`)
+        - MCP (`mcp` feature)
+        - Lockfile / dispatch / diagnostics
+        - Benchmarks (`bench` / `bench-gungraun`)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be willing to submit a PR for this feature

@@ -7,7 +7,7 @@
 //! # Standalone usage
 //!
 //! ```ignore
-//! use rebar::otel::{OtelConfig, build_otel_layer};
+//! use librebar::otel::{OtelConfig, build_otel_layer};
 //!
 //! let cfg = OtelConfig::from_app_name("my-tool", "0.1.0");
 //! let (layer, guard) = build_otel_layer(&cfg)?;

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "http")]
 
-use rebar::http::{HttpClient, HttpClientConfig};
+use librebar::http::{HttpClient, HttpClientConfig};
 use std::time::Duration;
 
 /// Run with `REBAR_TEST_NETWORK=1 cargo nextest run` to enable network tests.
@@ -40,7 +40,7 @@ async fn https_get_succeeds() {
     if !network_tests_enabled() {
         return;
     }
-    let client = HttpClient::from_app("rebar-test", "0.1.0").unwrap();
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
     let resp = client
         .get("https://api.github.com/zen")
         .await
@@ -58,7 +58,7 @@ async fn http_get_succeeds() {
     if !network_tests_enabled() {
         return;
     }
-    let client = HttpClient::from_app("rebar-test", "0.1.0").unwrap();
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
     let resp = client
         .get("http://httpbin.org/get")
         .await

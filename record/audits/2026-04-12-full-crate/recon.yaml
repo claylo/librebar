@@ -1,0 +1,148 @@
+meta:
+  project: rebar
+  commit: 89431caaefbdffcdaf2f0a3077c891ad27e4625b
+  timestamp: 2026-04-12T15:46:31-04:00
+  scope: full working tree at 89431ca
+structure:
+  root: /Users/clay/source/claylo/rebar
+  total_files: 79
+  total_lines: 15959
+  languages:
+    - language: HTML
+      files: 3
+      lines: 3988
+      percentage: 24.99
+    - language: Markdown
+      files: 12
+      lines: 5213
+      percentage: 32.66
+    - language: Rust
+      files: 32
+      lines: 3624
+      percentage: 22.71
+    - language: SVG
+      files: 24
+      lines: 336
+      percentage: 2.11
+    - language: TOML
+      files: 2
+      lines: 165
+      percentage: 1.03
+    - language: YAML
+      files: 6
+      lines: 2633
+      percentage: 16.5
+  modules:
+    - name: rebar
+      path: /Users/clay/source/claylo/rebar
+      files: 0
+      lines: 0
+dependencies:
+  manifest: /Users/clay/source/claylo/rebar/Cargo.toml
+  items:
+    - name: base64
+      version: ^0.22
+      kind: optional
+    - name: camino
+      version: ^1.2
+      kind: optional
+    - name: clap
+      version: ^4.6
+      kind: optional
+    - name: directories
+      version: ^6.0
+      kind: optional
+    - name: divan
+      version: ^0.1
+      kind: optional
+    - name: flate2
+      version: ^1.1
+      kind: optional
+    - name: fs4
+      version: ^0.13
+      kind: optional
+    - name: gungraun
+      version: ^0.17
+      kind: optional
+    - name: http-body-util
+      version: ^0.1
+      kind: optional
+    - name: hyper
+      version: ^1.9
+      kind: optional
+    - name: hyper-rustls
+      version: ^0.27
+      kind: optional
+    - name: hyper-util
+      version: ^0.1
+      kind: optional
+    - name: opentelemetry
+      version: ^0.31
+      kind: optional
+    - name: opentelemetry-otlp
+      version: ^0.31
+      kind: optional
+    - name: opentelemetry_sdk
+      version: ^0.31
+      kind: optional
+    - name: owo-colors
+      version: ^4.3
+      kind: optional
+    - name: rmcp
+      version: ^1.3
+      kind: optional
+    - name: rustls
+      version: ^0.23
+      kind: optional
+    - name: serde
+      version: ^1.0
+      kind: direct
+    - name: serde-saphyr
+      version: ^0.0
+      kind: optional
+    - name: serde_json
+      version: ^1.0
+      kind: optional
+    - name: tar
+      version: ^0.4
+      kind: optional
+    - name: thiserror
+      version: ^2.0
+      kind: direct
+    - name: tokio
+      version: ^1.51
+      kind: optional
+    - name: toml
+      version: ^0.8
+      kind: optional
+    - name: tracing
+      version: ^0.1
+      kind: direct
+    - name: tracing-appender
+      version: ^0.2
+      kind: optional
+    - name: tracing-opentelemetry
+      version: ^0.32
+      kind: optional
+    - name: tracing-subscriber
+      version: ^0.3
+      kind: optional
+    - name: which
+      version: ^7.0
+      kind: optional
+    - name: serde_json
+      version: ^1.0
+      kind: dev
+    - name: tempfile
+      version: ^3.27
+      kind: dev
+    - name: tokio
+      version: ^1.51
+      kind: dev
+churn:
+  period: last 12 months
+  hotspots: []
+  recent_activity:
+    total_commits: 36
+    active_authors: 1
+    files_changed: 100

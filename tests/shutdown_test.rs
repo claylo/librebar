@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "shutdown")]
 
-use rebar::shutdown::ShutdownHandle;
+use librebar::shutdown::ShutdownHandle;
 
 #[test]
 fn handle_starts_not_shutting_down() {

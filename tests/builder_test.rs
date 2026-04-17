@@ -9,7 +9,7 @@ use tempfile::TempDir;
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct TestConfig {
-    log_level: rebar::config::LogLevel,
+    log_level: librebar::config::LogLevel,
     custom: Option<String>,
 }
 
@@ -17,7 +17,7 @@ struct TestConfig {
 #[command(name = "test-app")]
 struct TestCli {
     #[command(flatten)]
-    pub common: rebar::cli::CommonArgs,
+    pub common: librebar::cli::CommonArgs,
 
     #[command(subcommand)]
     pub command: Option<TestCommands>,
@@ -32,7 +32,7 @@ enum TestCommands {
 fn builder_without_config() {
     let cli = TestCli::parse_from(["test-app", "run"]);
 
-    let app: rebar::App = rebar::init("test-app")
+    let app: librebar::App = librebar::init("test-app")
         .with_cli(cli.common)
         .start()
         .unwrap();
@@ -49,7 +49,7 @@ fn builder_with_config_file() {
 
     let cli = TestCli::parse_from(["test-app", "run"]);
 
-    let app: rebar::App<TestConfig> = rebar::init("test-app")
+    let app: librebar::App<TestConfig> = librebar::init("test-app")
         .with_cli(cli.common)
         .config_from_file::<TestConfig>(&config_path)
         .start()
@@ -61,12 +61,12 @@ fn builder_with_config_file() {
 #[test]
 fn builder_with_preloaded_config() {
     let config = TestConfig {
-        log_level: rebar::config::LogLevel::Debug,
+        log_level: librebar::config::LogLevel::Debug,
         custom: Some("preloaded".to_string()),
     };
     let cli = TestCli::parse_from(["test-app", "run"]);
 
-    let app = rebar::init("test-app")
+    let app = librebar::init("test-app")
         .with_cli(cli.common)
         .with_config(config)
         .start()
@@ -79,7 +79,7 @@ fn builder_with_preloaded_config() {
 fn app_cli_accessors() {
     let cli = TestCli::parse_from(["test-app", "--quiet", "run"]);
 
-    let app: rebar::App = rebar::init("test-app")
+    let app: librebar::App = librebar::init("test-app")
         .with_cli(cli.common)
         .start()
         .unwrap();
@@ -91,7 +91,7 @@ fn app_cli_accessors() {
 fn app_name_accessor() {
     let cli = TestCli::parse_from(["test-app", "run"]);
 
-    let app: rebar::App = rebar::init("test-app")
+    let app: librebar::App = librebar::init("test-app")
         .with_cli(cli.common)
         .start()
         .unwrap();
@@ -104,7 +104,7 @@ fn builder_config_sources_empty_without_files() {
     let config = TestConfig::default();
     let cli = TestCli::parse_from(["test-app", "run"]);
 
-    let app = rebar::init("test-app")
+    let app = librebar::init("test-app")
         .with_cli(cli.common)
         .with_config(config)
         .start()

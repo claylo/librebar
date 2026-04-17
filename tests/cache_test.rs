@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "cache")]
 
-use rebar::cache::Cache;
+use librebar::cache::Cache;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -59,7 +59,7 @@ fn clear_removes_all() {
 
 #[test]
 fn default_cache_dir_contains_app_name() {
-    let dir = rebar::cache::default_cache_dir("test-app");
+    let dir = librebar::cache::default_cache_dir("test-app");
     assert!(dir.is_some());
     let dir = dir.unwrap();
     let path = dir.to_string_lossy();

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "crash")]
 
-use rebar::crash;
+use librebar::crash;
 use std::fs;
 use tempfile::TempDir;
 

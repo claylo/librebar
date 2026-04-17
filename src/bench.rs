@@ -20,7 +20,7 @@
 //! # gungraun (instruction-count)
 //!
 //! ```ignore
-//! use rebar::bench::gungraun;
+//! use librebar::bench::gungraun;
 //!
 //! #[gungraun::library_benchmark]
 //! #[bench::args(1000)]

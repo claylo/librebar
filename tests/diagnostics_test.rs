@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "diagnostics")]
 
-use rebar::diagnostics::{CheckResult, CheckStatus, DebugBundle, DoctorCheck, DoctorRunner};
+use librebar::diagnostics::{CheckResult, CheckStatus, DebugBundle, DoctorCheck, DoctorRunner};
 use tempfile::TempDir;
 
 struct AlwaysPassCheck;

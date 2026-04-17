@@ -7,12 +7,12 @@
 //! # Example
 //!
 //! ```no_run
-//! use rebar::lockfile::Lockfile;
+//! use librebar::lockfile::Lockfile;
 //!
 //! let lock = Lockfile::default_for("my-app")?;
 //! let _guard = lock.try_acquire()?;
 //! // Exclusive section — guard released when dropped.
-//! # Ok::<(), rebar::Error>(())
+//! # Ok::<(), librebar::Error>(())
 //! ```
 
 use std::fs::File;

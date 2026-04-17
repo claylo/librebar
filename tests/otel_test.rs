@@ -1,7 +1,7 @@
 #![allow(missing_docs, unsafe_code)]
 #![cfg(feature = "otel")]
 
-use rebar::otel::OtelConfig;
+use librebar::otel::OtelConfig;
 
 /// Clear OTEL env vars so tests run deterministically regardless of
 /// the host environment.
@@ -45,7 +45,7 @@ fn otel_config_with_endpoint() {
 fn build_layer_returns_none_without_endpoint() {
     clear_otel_env();
     let cfg = OtelConfig::from_app_name("test-app", "0.1.0");
-    let result = rebar::otel::build_otel_layer(&cfg);
+    let result = librebar::otel::build_otel_layer(&cfg);
     assert!(result.is_ok());
     let (layer, guard) = result.unwrap();
     assert!(layer.is_none(), "no endpoint means no layer");

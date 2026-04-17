@@ -23,11 +23,11 @@ dependabot_security_updates: true
 secrets_tags: claylo-github-actions
 secrets_app: actions
 
-# variables:
-#   CRATES_IO_ENABLED: true
-#   HOMEBREW_ENABLED: true
-#   HOMEBREW_TAP: "claylo/homebrew-tap"
-#   GPG_SIGNING_ENABLED: true
-#   NPM_ENABLED: true
-#   SBOM_ENABLED: true
-#   AUTO_RELEASE_ENABLED: false
+variables:
+  CRATES_IO_ENABLED: true
+  HOMEBREW_ENABLED: false
+  HOMEBREW_TAP: "claylo/homebrew-tap"
+  GPG_SIGNING_ENABLED: true
+  NPM_ENABLED: false
+  SBOM_ENABLED: true
+  AUTO_RELEASE_ENABLED: false

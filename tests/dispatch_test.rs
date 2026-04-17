@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "dispatch")]
 
-use rebar::dispatch;
+use librebar::dispatch;
 
 #[test]
 fn find_subcommand_binary_name() {
@@ -11,6 +11,6 @@ fn find_subcommand_binary_name() {
 
 #[test]
 fn resolve_returns_none_for_missing_command() {
-    let result = dispatch::resolve("rebar-test-nonexistent-42", "fakecmd");
+    let result = dispatch::resolve("librebar-test-nonexistent-42", "fakecmd");
     assert!(result.is_none());
 }

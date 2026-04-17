@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "lockfile")]
 
-use rebar::lockfile::Lockfile;
+use librebar::lockfile::Lockfile;
 use tempfile::TempDir;
 
 #[test]
@@ -34,7 +34,7 @@ fn lock_released_on_guard_drop() {
 
 #[test]
 fn lock_dir_default_contains_app_name() {
-    let dir = rebar::lockfile::default_lock_dir("test-app");
+    let dir = librebar::lockfile::default_lock_dir("test-app");
     let path = dir.to_string_lossy();
     assert!(
         path.contains("test-app"),

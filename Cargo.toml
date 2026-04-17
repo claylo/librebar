@@ -1,16 +1,16 @@
 [package]
-name = "rebar"
+name = "librebar"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
-repository = "https://github.com/claylo/rebar"
-homepage = "https://github.com/claylo/rebar"
-documentation = "https://docs.rs/rebar"
-description = "Rust application foundation crate"
-keywords = []
-categories = []
+repository = "https://github.com/claylo/librebar"
+homepage = "https://github.com/claylo/librebar"
+documentation = "https://docs.rs/librebar"
+description = "Opinionated application foundation for Rust CLIs and services"
+keywords = ["cli", "config", "logging", "tracing", "mcp"]
+categories = ["command-line-interface", "config", "development-tools"]
 exclude = [
     "/.claude/",
     "/.github/",

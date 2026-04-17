@@ -1,7 +1,7 @@
 #![allow(missing_docs, unsafe_code)]
 #![cfg(feature = "update")]
 
-use rebar::update::{UpdateChecker, UpdateInfo};
+use librebar::update::{UpdateChecker, UpdateInfo};
 
 #[test]
 fn checker_from_app_name() {
@@ -29,11 +29,11 @@ fn not_suppressed_by_default() {
 
 #[test]
 fn version_is_newer() {
-    assert!(rebar::update::is_newer("0.1.0", "0.2.0"));
-    assert!(rebar::update::is_newer("0.1.0", "1.0.0"));
-    assert!(rebar::update::is_newer("1.2.3", "1.2.4"));
-    assert!(!rebar::update::is_newer("0.2.0", "0.1.0"));
-    assert!(!rebar::update::is_newer("1.0.0", "1.0.0"));
+    assert!(librebar::update::is_newer("0.1.0", "0.2.0"));
+    assert!(librebar::update::is_newer("0.1.0", "1.0.0"));
+    assert!(librebar::update::is_newer("1.2.3", "1.2.4"));
+    assert!(!librebar::update::is_newer("0.2.0", "0.1.0"));
+    assert!(!librebar::update::is_newer("1.0.0", "1.0.0"));
 }
 
 #[test]
