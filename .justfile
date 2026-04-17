@@ -16,9 +16,11 @@ fix:
   echo "Using toolchain {{toolchain}}"
   cargo +{{toolchain}} clippy --fix --allow-dirty --allow-staged -- -W clippy::all
 
-# Check dependencies for security advisories and license compliance
+# Check dependencies for security advisories and license compliance.
+# `--all-features` walks the full dep tree so optional features (hyper-rustls,
+# opentelemetry, etc.) are covered — matches the CI invocation.
 deny:
-  cargo deny check --config .config/deny.toml
+  cargo deny --all-features check --config .config/deny.toml
 
 test:
   cargo nextest run --workspace --all-features
