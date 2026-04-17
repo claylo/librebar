@@ -11,6 +11,7 @@ Every example is a full `main()` you can read top-to-bottom.
 |---------|----------|----------|
 | [`minimal`](minimal.rs) | Smallest idiomatic librebar app: flags, config, structured logs | `cli`, `config`, `logging` |
 | [`service`](service.rs) | Long-running async service: shutdown token, crash dumps, optional OTEL export | `cli`, `config`, `logging`, `shutdown`, `crash`, `otel` |
+| [`updater`](updater.rs) | GitHub releases check: real HTTPS call, 24h cache, `{APP}_NO_UPDATE_CHECK` gate | `cli`, `config`, `logging`, `http`, `cache`, `update` |
 
 ## Running
 
@@ -21,6 +22,8 @@ pass the feature flags explicitly:
 cargo run --example minimal --features "cli,config,logging" -- --help
 cargo run --example service \
     --features "cli,config,logging,shutdown,crash,otel" -- --help
+cargo run --example updater \
+    --features "cli,config,logging,http,cache,update" -- --help
 ```
 
 Config discovery walks up from the current directory, so the sample `.toml`
