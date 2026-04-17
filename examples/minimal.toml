@@ -1,0 +1,10 @@
+# Sample config for the `minimal` example.
+#
+# librebar discovers config by walking up from the current directory.
+# Running the example from ./examples will find this file via the
+# `./minimal.toml` rule; running from the project root with `-C examples`
+# does the same.
+
+log_level = "info"
+greeting = "bonjour"
+name = "librebar"

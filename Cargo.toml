@@ -86,6 +86,11 @@ gungraun = { version = "0.17", optional = true }
 tempfile = "3.27"
 serde_json = "1.0"
 tokio = { version = "1.51", features = ["rt", "macros", "time"] }
+anyhow = "1.0"
+
+[[example]]
+name = "minimal"
+required-features = ["cli", "config", "logging"]
 
 [features]
 cli = ["dep:clap", "dep:owo-colors"]
