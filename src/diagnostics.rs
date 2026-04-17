@@ -6,7 +6,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use librebar::diagnostics::{DoctorCheck, DoctorRunner, CheckResult, CheckStatus};
 //!
 //! struct ConfigCheck;
@@ -22,7 +22,8 @@
 //! let mut runner = DoctorRunner::new();
 //! runner.add(Box::new(ConfigCheck));
 //! let results = runner.run_all();
-//! println!("{}", DoctorRunner::format_report(&results));
+//! let report = DoctorRunner::format_report(&results);
+//! assert!(report.contains("config"));
 //! ```
 
 use std::path::{Path, PathBuf};

@@ -80,8 +80,13 @@
 //!
 //! The builder wires enabled features together in the correct init order:
 //!
-//! ```ignore
-//! use clap::Parser;
+//! ```no_run
+//! use clap::{Parser, Subcommand};
+//! # use serde::{Deserialize, Serialize};
+//! #
+//! # #[derive(Default, Deserialize, Serialize)]
+//! # #[serde(default)]
+//! # struct Config {}
 //!
 //! #[derive(Parser)]
 //! struct Cli {
@@ -91,6 +96,10 @@
 //!     pub command: Option<Commands>,
 //! }
 //!
+//! # #[derive(Subcommand)]
+//! # enum Commands { Run }
+//! #
+//! # fn main() -> librebar::Result<()> {
 //! let cli = Cli::parse();
 //!
 //! let app = librebar::init(env!("CARGO_PKG_NAME"))
@@ -101,6 +110,9 @@
 //!     .shutdown()
 //!     .crash_handler()
 //!     .start()?;
+//! # let _ = app;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Modules not wired through the builder (lockfile, http, cache, update,
