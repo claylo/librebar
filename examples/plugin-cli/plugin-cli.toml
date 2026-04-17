@@ -1,0 +1,7 @@
+# Sample config for the `plugin-cli` example.
+#
+# Demonstrates that config discovery contributes even when the config surface
+# is tiny. Run `plugin-cli -C examples/plugin-cli info` to see this file show
+# up in `sources`.
+
+log_level = "info"
