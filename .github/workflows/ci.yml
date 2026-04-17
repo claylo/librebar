@@ -64,10 +64,10 @@ jobs:
           binstall-tools: cargo-nextest
 
       - name: nextest
-        run: cargo nextest run --profile ci
+        run: cargo nextest run --workspace --all-features --profile ci
 
       - name: doctests
-        run: cargo test --doc
+        run: cargo test --doc --all-features
 
   deny:
     name: cargo-deny

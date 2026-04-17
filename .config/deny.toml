@@ -25,6 +25,11 @@ allow = [
 
     # Unicode/text processing
     "Unicode-3.0",
+
+    # Data licenses (Linux Foundation, OSI-permissive-equivalent for data catalogs).
+    # `webpki-roots` ships Mozilla's curated CA-certificate list under this
+    # license because what it distributes is data, not code.
+    "CDLA-Permissive-2.0",
 ]
 
 confidence-threshold = 0.8
@@ -38,16 +43,13 @@ unused-allowed-license = "allow"
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/RustSec/advisory-db"]
 
-# Accepted advisories (documented for humans; cargo-deny's default scan is
-# feature-gated and does not traverse optional features, so runtime ignore
-# entries for feature-only paths produce spurious "not encountered" warnings).
+# Accepted advisories.
 #
 # RUSTSEC-2025-0141 — bincode 1.3.3 is unmaintained.
 #   Reached only through the optional `bench-gungraun` feature, which is a
 #   dev-facing one-shot instruction-count benchmark harness (Valgrind/
 #   Callgrind). gungraun 0.18.1 still pins `bincode = "1"` in its workspace,
-#   so upgrading gungraun does not remove the edge. Surfaced by `cargo audit`
-#   against the full lockfile; not reached by the default `just deny` gate.
+#   so upgrading gungraun does not remove the edge.
 #   Accepted because:
 #     1. No runtime impact on default crate consumers — `bench-gungraun` is
 #        opt-in and is not part of any default feature set.
@@ -57,7 +59,9 @@ db-urls = ["https://github.com/RustSec/advisory-db"]
 #        without replacing the benchmark harness entirely.
 #   Revisit if gungraun migrates off bincode 1.x, or if librebar swaps benchmark
 #   harnesses.
-ignore = []
+ignore = [
+    "RUSTSEC-2025-0141",
+]
 
 # ==============================================================================
 # Banned Dependencies
