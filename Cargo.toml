@@ -106,6 +106,10 @@ path = "examples/plugin-cli/main.rs"
 required-features = ["cli", "config", "logging", "dispatch"]
 
 [[example]]
+name = "doctor-bundle"
+required-features = ["cli", "config", "logging", "diagnostics"]
+
+[[example]]
 name = "plugin-cli-hello-greet"
 path = "examples/plugin-cli/hello-greet/main.rs"
 required-features = ["cli"]
