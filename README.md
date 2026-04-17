@@ -337,6 +337,61 @@ the OpenTelemetry Collector, or commercial backends (Honeycomb, Grafana
 Cloud, etc.). Point `OTEL_EXPORTER_OTLP_ENDPOINT` at their ingest URL and
 spans flow.
 
+## Versioning
+
+librebar follows semantic versioning with the Rust-ecosystem pre-1.0
+convention:
+
+| Release track | Behavior |
+|---------------|----------|
+| **0.x** (current) | Minor bumps (`0.1.0` → `0.2.0`) **may contain breaking changes**. Patch bumps (`0.1.0` → `0.1.1`) are additive or bug-fix only. |
+| **1.0 and beyond** | Strict semver. Breaking changes require a major bump. |
+
+### What counts as breaking
+
+During the 0.x line, the following changes warrant a minor bump:
+
+- Removing or renaming any public item (type, function, method, module,
+  feature flag).
+- Changing a public function's signature in a way that breaks existing
+  call sites — including parameter type changes, return-type changes,
+  or trait-bound tightening.
+- Adding, removing, or renaming a variant on the [`Error`](src/error.rs)
+  enum. The enum is currently exhaustive; adding `#[non_exhaustive]` to
+  it is on the roadmap and will loosen this constraint when it lands.
+- Changing the semantics of a stable API (e.g., a method that previously
+  returned `Ok(None)` now returns `Err`).
+- Raising the MSRV beyond what is documented in `rust-version` in
+  `Cargo.toml`.
+
+The following changes are **not** breaking and can land in a patch:
+
+- Adding new public items (types, functions, methods, feature flags).
+- Adding new optional config fields that have `#[serde(default)]`.
+- Internal refactoring, performance improvements, and dependency bumps
+  that don't change the public surface.
+
+### MSRV
+
+The minimum supported Rust version is pinned in `Cargo.toml`'s
+`rust-version` field (currently `1.89.0`) and tested against in CI.
+MSRV increases are treated as breaking and batched into minor bumps
+during the 0.x line and into major bumps after 1.0.
+
+### When does 1.0 ship
+
+When the public API holds stable across two consecutive minor releases
+with no breaking changes. No external gate, no calendar deadline.
+
+**Using librebar anywhere?** Open an
+[issue on GitHub](https://github.com/claylo/librebar/issues) with a
+one-line "using it for X" — not a gate for 1.0, just an invitation.
+External consumers surface ergonomic issues that self-dogfooding can't,
+and earlier signal makes for a better 1.0.
+
+Until then, pin to a specific minor version (`librebar = "0.1"`) if you
+want the patch-only guarantee.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
