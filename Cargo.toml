@@ -110,6 +110,10 @@ name = "doctor-bundle"
 required-features = ["cli", "config", "logging", "diagnostics"]
 
 [[example]]
+name = "mcp-server"
+required-features = ["cli", "config", "logging", "mcp"]
+
+[[example]]
 name = "plugin-cli-hello-greet"
 path = "examples/plugin-cli/hello-greet/main.rs"
 required-features = ["cli"]

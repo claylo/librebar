@@ -1,0 +1,7 @@
+# Sample config for the `mcp-server` example.
+#
+# Discovered via the standard walk-up from the current directory.
+# Override `greeting` to see it flow through to the `greet` tool's output.
+
+log_level = "info"
+greeting = "bonjour"
