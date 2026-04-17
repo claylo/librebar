@@ -36,7 +36,9 @@ impl ColorChoice {
 ///
 /// Embed in your app's CLI struct with `#[command(flatten)]`:
 ///
-/// ```ignore
+/// ```
+/// use clap::{Parser, Subcommand};
+///
 /// #[derive(Parser)]
 /// struct MyCli {
 ///     #[command(flatten)]
@@ -44,6 +46,9 @@ impl ColorChoice {
 ///     #[command(subcommand)]
 ///     pub command: Option<MyCommands>,
 /// }
+///
+/// #[derive(Subcommand)]
+/// enum MyCommands { Run }
 /// ```
 #[derive(Parser, Debug)]
 pub struct CommonArgs {
@@ -95,9 +100,21 @@ impl CommonArgs {
 ///
 /// Usage: call this on the result of `YourCli::command()` before parsing:
 ///
-/// ```ignore
+/// ```no_run
+/// use clap::{CommandFactory, FromArgMatches, Parser};
+///
+/// #[derive(Parser)]
+/// struct MyCli {
+///     #[arg(long)]
+///     name: Option<String>,
+/// }
+///
+/// # fn main() -> Result<(), clap::Error> {
 /// let cmd = librebar::cli::with_help_short(MyCli::command());
 /// let cli = MyCli::from_arg_matches(&cmd.get_matches())?;
+/// # let _ = cli;
+/// # Ok(())
+/// # }
 /// ```
 pub fn with_help_short(cmd: clap::Command) -> clap::Command {
     cmd.arg(

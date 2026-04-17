@@ -6,15 +6,19 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
+//! # fn main() -> librebar::Result<()> {
 //! let app = librebar::init(env!("CARGO_PKG_NAME"))
 //!     .crash_handler()
 //!     .start()?;
+//! # let _ = app;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Or install the hook directly (escape hatch):
 //!
-//! ```ignore
+//! ```no_run
 //! librebar::crash::install("myapp", env!("CARGO_PKG_VERSION"));
 //! ```
 

@@ -463,12 +463,30 @@ macro_rules! builder_methods {
 
 /// Start building a librebar application.
 ///
-/// ```ignore
+/// ```no_run
+/// # use clap::Parser;
+/// # use serde::{Deserialize, Serialize};
+/// #
+/// # #[derive(Default, Deserialize, Serialize)]
+/// # #[serde(default)]
+/// # struct Config {}
+/// #
+/// # #[derive(Parser)]
+/// # struct Cli {
+/// #     #[command(flatten)]
+/// #     pub common: librebar::cli::CommonArgs,
+/// # }
+/// #
+/// # fn main() -> librebar::Result<()> {
+/// # let cli = Cli::parse();
 /// let app = librebar::init(env!("CARGO_PKG_NAME"))
 ///     .with_cli(cli.common)
 ///     .config::<Config>()
 ///     .logging()
 ///     .start()?;
+/// # let _ = app;
+/// # Ok(())
+/// # }
 /// ```
 pub fn init(app_name: &str) -> Builder {
     Builder {

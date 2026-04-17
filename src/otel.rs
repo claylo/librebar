@@ -6,12 +6,16 @@
 //!
 //! # Standalone usage
 //!
-//! ```ignore
+//! ```no_run
 //! use librebar::otel::{OtelConfig, build_otel_layer};
 //!
+//! # fn main() -> librebar::Result<()> {
 //! let cfg = OtelConfig::from_app_name("my-tool", "0.1.0");
 //! let (layer, guard) = build_otel_layer(&cfg)?;
 //! // layer is Option — None when no endpoint is configured
+//! # let _ = (layer, guard);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Environment variables

@@ -9,12 +9,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! use librebar::http::HttpClient;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = HttpClient::from_app("my-app", "1.0.0")?;
 //! let resp = client.get("https://api.github.com/repos/owner/repo/releases/latest").await?;
 //! if resp.is_success() {
 //!     println!("{}", resp.text()?);
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use std::time::Duration;
