@@ -356,9 +356,10 @@ During the 0.x line, the following changes warrant a minor bump:
 - Changing a public function's signature in a way that breaks existing
   call sites — including parameter type changes, return-type changes,
   or trait-bound tightening.
-- Adding, removing, or renaming a variant on the [`Error`](src/error.rs)
-  enum. The enum is currently exhaustive; adding `#[non_exhaustive]` to
-  it is on the roadmap and will loosen this constraint when it lands.
+- Removing or renaming a variant on the [`Error`](src/error.rs) enum
+  (or any of its per-module companions: `HttpError`, `CacheError`,
+  `ConfigParseError`). These enums are all `#[non_exhaustive]`, so
+  **adding** a variant is additive and ships in a patch.
 - Changing the semantics of a stable API (e.g., a method that previously
   returned `Ok(None)` now returns `Err`).
 - Raising the MSRV beyond what is documented in `rust-version` in
@@ -367,6 +368,8 @@ During the 0.x line, the following changes warrant a minor bump:
 The following changes are **not** breaking and can land in a patch:
 
 - Adding new public items (types, functions, methods, feature flags).
+- Adding new variants to `Error`, `HttpError`, `CacheError`, or
+  `ConfigParseError` (all `#[non_exhaustive]`).
 - Adding new optional config fields that have `#[serde(default)]`.
 - Internal refactoring, performance improvements, and dependency bumps
   that don't change the public surface.
