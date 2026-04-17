@@ -1,0 +1,9 @@
+# Sample config for the `updater` example.
+#
+# Overrides the code defaults to demonstrate that config discovery is
+# actually contributing values. Compare the `repo` output from `info`
+# with and without `-C examples` to see the overlay in action.
+
+log_level = "info"
+repo = "sharkdp/fd"
+pretend_version = "0.0.1"

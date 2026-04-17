@@ -96,6 +96,10 @@ required-features = ["cli", "config", "logging"]
 name = "service"
 required-features = ["cli", "config", "logging", "shutdown", "crash", "otel"]
 
+[[example]]
+name = "updater"
+required-features = ["cli", "config", "logging", "http", "cache", "update"]
+
 [features]
 cli = ["dep:clap", "dep:owo-colors"]
 config = ["dep:toml", "dep:serde-saphyr", "dep:serde_json", "dep:camino", "dep:directories"]
