@@ -6,14 +6,18 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
+//! # async fn do_work() {}
+//! # async fn example() -> librebar::Result<()> {
 //! let app = librebar::init("myapp").shutdown().start()?;
-//! let mut token = app.shutdown_token();
+//! let mut token = app.shutdown_token().expect("shutdown() was called on the builder");
 //!
 //! tokio::select! {
 //!     _ = do_work() => {},
 //!     _ = token.cancelled() => { /* cleanup */ },
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use tokio::sync::watch;

@@ -7,11 +7,13 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # async fn example() {
 //! let checker = librebar::update::UpdateChecker::new("myapp", "0.1.0", "owner/repo");
 //! if let Some(update) = checker.check().await {
 //!     eprintln!("{}", update.message());
 //! }
+//! # }
 //! ```
 
 use std::time::Duration;

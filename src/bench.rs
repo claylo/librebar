@@ -8,7 +8,9 @@
 //!
 //! # divan (wall-clock)
 //!
-//! ```ignore
+//! ```no_run
+//! use librebar::bench::divan;
+//!
 //! fn main() {
 //!     divan::main();
 //! }
@@ -19,18 +21,26 @@
 //!
 //! # gungraun (instruction-count)
 //!
-//! ```ignore
-//! use librebar::bench::gungraun;
+//! In a real benchmark crate these items live at the top level of a
+//! `benches/*.rs` file. The `mod` wrapper below only exists so rustdoc
+//! can name-resolve `sort_vec` inside [`gungraun::library_benchmark_group!`]
+//! — rustdoc wraps each snippet in an implicit `fn main()`, which hides
+//! top-level identifiers from the macro's expansion.
 //!
-//! #[gungraun::library_benchmark]
-//! #[bench::args(1000)]
-//! fn sort_vec(n: usize) {
-//!     let mut v: Vec<u32> = (0..n as u32).rev().collect();
-//!     v.sort();
+//! ```no_run
+//! mod example_bench {
+//!     use librebar::bench::gungraun;
+//!
+//!     #[gungraun::library_benchmark]
+//!     #[bench::args(1000)]
+//!     fn sort_vec(n: usize) {
+//!         let mut v: Vec<u32> = (0..n as u32).rev().collect();
+//!         v.sort();
+//!     }
+//!
+//!     gungraun::library_benchmark_group!(name = sorting; benchmarks = sort_vec);
+//!     gungraun::main!(library_benchmark_groups = sorting);
 //! }
-//!
-//! gungraun::library_benchmark_group!(name = sorting; benchmarks = sort_vec);
-//! gungraun::main!(library_benchmark_groups = sorting);
 //! ```
 
 #[cfg(feature = "bench")]
