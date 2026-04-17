@@ -10,6 +10,7 @@ Every example is a full `main()` you can read top-to-bottom.
 | Example | Scenario | Features |
 |---------|----------|----------|
 | [`minimal`](minimal.rs) | Smallest idiomatic librebar app: flags, config, structured logs | `cli`, `config`, `logging` |
+| [`service`](service.rs) | Long-running async service: shutdown token, crash dumps, optional OTEL export | `cli`, `config`, `logging`, `shutdown`, `crash`, `otel` |
 
 ## Running
 
@@ -18,6 +19,8 @@ pass the feature flags explicitly:
 
 ```sh
 cargo run --example minimal --features "cli,config,logging" -- --help
+cargo run --example service \
+    --features "cli,config,logging,shutdown,crash,otel" -- --help
 ```
 
 Config discovery walks up from the current directory, so the sample `.toml`

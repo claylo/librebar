@@ -1,0 +1,10 @@
+# Sample config for the `service` example.
+#
+# librebar discovers config by walking up from the current directory.
+# Running from ./examples finds this as ./service.toml; running from
+# the repo root with `-C examples` does the same.
+
+log_level = "info"
+tick_interval_ms = 500
+shutdown_grace_ms = 250
+greeting = "service heartbeat"
