@@ -452,7 +452,7 @@ where
             // Best-effort: tracing Layer callbacks cannot return errors,
             // so fall back to stderr if the log sink is broken.
             if writer.write_all(&buf).is_err() {
-                eprintln!("[rebar] failed to write log entry to sink");
+                eprintln!("[librebar] failed to write log entry to sink");
             }
         }
     }

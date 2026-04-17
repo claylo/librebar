@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```ignore
-//! let checker = rebar::update::UpdateChecker::new("myapp", "0.1.0", "owner/repo");
+//! let checker = librebar::update::UpdateChecker::new("myapp", "0.1.0", "owner/repo");
 //! if let Some(update) = checker.check().await {
 //!     eprintln!("{}", update.message());
 //! }

@@ -1,4 +1,4 @@
-//! CLI argument types shared across rebar-based applications.
+//! CLI argument types shared across librebar-based applications.
 //!
 //! Provides [`CommonArgs`] for standard flags (quiet, verbose, json, color, chdir)
 //! and [`ColorChoice`] for terminal color configuration. Consumers embed these
@@ -32,7 +32,7 @@ impl ColorChoice {
     }
 }
 
-/// Common CLI arguments shared across all rebar-based applications.
+/// Common CLI arguments shared across all librebar-based applications.
 ///
 /// Embed in your app's CLI struct with `#[command(flatten)]`:
 ///
@@ -40,7 +40,7 @@ impl ColorChoice {
 /// #[derive(Parser)]
 /// struct MyCli {
 ///     #[command(flatten)]
-///     pub common: rebar::cli::CommonArgs,
+///     pub common: librebar::cli::CommonArgs,
 ///     #[command(subcommand)]
 ///     pub command: Option<MyCommands>,
 /// }
@@ -96,7 +96,7 @@ impl CommonArgs {
 /// Usage: call this on the result of `YourCli::command()` before parsing:
 ///
 /// ```ignore
-/// let cmd = rebar::cli::with_help_short(MyCli::command());
+/// let cmd = librebar::cli::with_help_short(MyCli::command());
 /// let cli = MyCli::from_arg_matches(&cmd.get_matches())?;
 /// ```
 pub fn with_help_short(cmd: clap::Command) -> clap::Command {

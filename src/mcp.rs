@@ -6,10 +6,10 @@
 //! # Usage
 //!
 //! ```ignore
-//! use rebar::mcp::ServiceExt;
+//! use librebar::mcp::ServiceExt;
 //!
 //! let server = MyServer::new();
-//! let service = server.serve(rebar::mcp::transport_stdio()).await?;
+//! let service = server.serve(librebar::mcp::transport_stdio()).await?;
 //! service.waiting().await?;
 //! ```
 

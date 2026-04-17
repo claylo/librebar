@@ -1,4 +1,4 @@
-# Security policy configuration for rebar
+# Security policy configuration for librebar
 
 # ==============================================================================
 # License Management
@@ -53,9 +53,9 @@ db-urls = ["https://github.com/RustSec/advisory-db"]
 #        opt-in and is not part of any default feature set.
 #     2. bincode is used by gungraun to serialize benchmark result data, not
 #        to parse untrusted input.
-#     3. The migration path is upstream-only; rebar cannot resolve this edge
+#     3. The migration path is upstream-only; librebar cannot resolve this edge
 #        without replacing the benchmark harness entirely.
-#   Revisit if gungraun migrates off bincode 1.x, or if rebar swaps benchmark
+#   Revisit if gungraun migrates off bincode 1.x, or if librebar swaps benchmark
 #   harnesses.
 ignore = []
 

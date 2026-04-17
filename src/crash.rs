@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! let app = rebar::init(env!("CARGO_PKG_NAME"))
+//! let app = librebar::init(env!("CARGO_PKG_NAME"))
 //!     .crash_handler()
 //!     .start()?;
 //! ```
@@ -15,7 +15,7 @@
 //! Or install the hook directly (escape hatch):
 //!
 //! ```ignore
-//! rebar::crash::install("myapp", env!("CARGO_PKG_VERSION"));
+//! librebar::crash::install("myapp", env!("CARGO_PKG_VERSION"));
 //! ```
 
 use std::path::{Path, PathBuf};

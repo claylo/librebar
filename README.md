@@ -1,6 +1,6 @@
-# Rebar
+# Librebar
 
-Rust application foundation crate. Wire up CLI flags, layered config, and structured logging in about 30 lines.
+Opinionated application foundation for Rust CLIs and services. Wire up CLI flags, layered config, and structured logging in about 30 lines.
 
 ```rust
 use anyhow::Result;
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct Config {
-    log_level: rebar::config::LogLevel,
+    log_level: librebar::config::LogLevel,
     database_url: Option<String>,
 }
 
@@ -18,7 +18,7 @@ struct Config {
 #[command(name = "myapp", about = "Does useful things")]
 struct Cli {
     #[command(flatten)]
-    pub common: rebar::cli::CommonArgs,
+    pub common: librebar::cli::CommonArgs,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     cli.common.apply_color();
 
-    let app = rebar::init(env!("CARGO_PKG_NAME"))
+    let app = librebar::init(env!("CARGO_PKG_NAME"))
         .with_cli(cli.common)
         .config::<Config>()
         .logging()
@@ -47,28 +47,65 @@ fn main() -> Result<()> {
 }
 ```
 
-Rebar is a library, not a framework. You own `main()`. You own your CLI struct. You own your config struct. Rebar handles the wiring that is identical across every project.
+Librebar is a library, not a framework. You own `main()`. You own your CLI struct. You own your config struct. Librebar handles the wiring that is identical across every project.
 
 ## Installation
 
-Add rebar to your `Cargo.toml` with the features you need:
+Add librebar to your `Cargo.toml` with the features you need:
 
 ```toml
 [dependencies]
-rebar = { git = "https://github.com/claylo/rebar", features = ["cli", "config", "logging"] }
+librebar = { git = "https://github.com/claylo/librebar", features = ["cli", "config", "logging"] }
 ```
 
 No default features. You opt into exactly what you need.
 
 ## Features
 
+No default features. Opt in to exactly what your application needs.
+
+### Core application
+
 | Feature | What it does |
 |---------|-------------|
 | `cli` | `CommonArgs` with `--quiet`, `-v`, `--json`, `--color`, `-C`, `--version-only` |
 | `config` | Layered config discovery, deep merge, TOML/YAML/JSON parsing |
 | `logging` | JSONL structured logging with daily rotation and platform-aware log directories |
+| `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
+| `crash` | Panic hook with structured JSON crash dumps written to the XDG cache directory |
 
-Features coming in later phases: `otel`, `mcp`, `shutdown`, `crash`, `http`, `update`, `lockfile`, `cache`, `dispatch`, `diagnostics`.
+### Networking and data
+
+| Feature | What it does |
+|---------|-------------|
+| `http` | HTTPS client with tracing, timeouts, user-agent (rustls + Mozilla CA roots) |
+| `cache` | File-based key-value cache with TTL (XDG cache directory) |
+| `update` | "Update available" notifications via the GitHub releases API (24-hour cache) |
+
+### Integration
+
+| Feature | What it does |
+|---------|-------------|
+| `otel` | OpenTelemetry tracing export via OTLP/HTTP |
+| `otel-grpc` | OpenTelemetry via gRPC (adds Tonic transport) |
+| `mcp` | Model Context Protocol server support (rmcp wrapper) |
+
+### Operational
+
+| Feature | What it does |
+|---------|-------------|
+| `lockfile` | Exclusive file locks to prevent concurrent instances |
+| `dispatch` | Git-style `{app}-{subcommand}` plugin lookup on PATH |
+| `diagnostics` | `doctor` command framework + `.tar.gz` debug bundle builder |
+
+### Benchmarking (dev-only)
+
+| Feature | What it does |
+|---------|-------------|
+| `bench` | Wall-clock benchmarks via [divan](https://crates.io/crates/divan) (any platform) |
+| `bench-gungraun` | Instruction-count benchmarks via [gungraun](https://crates.io/crates/gungraun) / Valgrind (Linux/Intel) |
+
+Some features automatically enable their dependencies: `update` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
 
 ## CLI
 
@@ -78,14 +115,14 @@ Embed `CommonArgs` into your own clap struct with `#[command(flatten)]`:
 #[derive(clap::Parser)]
 struct Cli {
     #[command(flatten)]
-    pub common: rebar::cli::CommonArgs,
+    pub common: librebar::cli::CommonArgs,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 ```
 
-This gives every rebar-based app a consistent set of flags:
+This gives every librebar-based app a consistent set of flags:
 
 | Flag | Short | Effect |
 |------|-------|--------|
@@ -101,7 +138,7 @@ For compact help (`-h` shows short help, `--help` shows long help):
 ```rust
 use clap::CommandFactory;
 
-let cmd = rebar::cli::with_help_short(Cli::command());
+let cmd = librebar::cli::with_help_short(Cli::command());
 let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 ```
 
@@ -115,7 +152,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct Config {
-    log_level: rebar::config::LogLevel,
+    log_level: librebar::config::LogLevel,
     log_dir: Option<camino::Utf8PathBuf>,
     database_url: Option<String>,
 }
@@ -149,7 +186,7 @@ defaults from Config::default()
 Load from a specific path instead of discovery:
 
 ```rust
-let app = rebar::init("myapp")
+let app = librebar::init("myapp")
     .config_from_file::<Config>(&config_path)
     .start()?;
 ```
@@ -159,7 +196,7 @@ let app = rebar::init("myapp")
 Skip the builder entirely and use the config module directly:
 
 ```rust
-let (config, sources) = rebar::config::ConfigLoader::new("myapp")
+let (config, sources) = librebar::config::ConfigLoader::new("myapp")
     .with_project_search(&cwd)
     .with_boundary_marker(".git")
     .load::<Config>()?;
@@ -168,7 +205,7 @@ let (config, sources) = rebar::config::ConfigLoader::new("myapp")
 Or load a pre-built config:
 
 ```rust
-let app = rebar::init("myapp")
+let app = librebar::init("myapp")
     .with_config(my_config)
     .start()?;
 ```
@@ -206,9 +243,9 @@ RUST_LOG=...  → custom filter
 Use the logging module without the builder:
 
 ```rust
-let log_cfg = rebar::logging::LoggingConfig::from_app_name("myapp");
-let filter = rebar::logging::env_filter(false, 0, "info");
-let _guard = rebar::logging::init(&log_cfg, filter)?;
+let log_cfg = librebar::logging::LoggingConfig::from_app_name("myapp");
+let filter = librebar::logging::env_filter(false, 0, "info");
+let _guard = librebar::logging::init(&log_cfg, filter)?;
 ```
 
 Hold the guard for the application's lifetime. When it drops, logs flush.
@@ -223,7 +260,7 @@ The builder wires everything in the correct initialization order:
 
 ```rust
 // Full setup — CLI, config, and logging
-let app = rebar::init(env!("CARGO_PKG_NAME"))
+let app = librebar::init(env!("CARGO_PKG_NAME"))
     .with_cli(cli.common)
     .config::<Config>()
     .logging()
@@ -238,7 +275,7 @@ let cli_args = app.cli();
 Without config, `.start()` returns `App<()>`:
 
 ```rust
-let app = rebar::init("myapp")
+let app = librebar::init("myapp")
     .with_cli(cli.common)
     .logging()
     .start()?;

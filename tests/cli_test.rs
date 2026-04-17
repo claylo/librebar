@@ -3,12 +3,12 @@
 
 use clap::Parser;
 
-/// Test harness that embeds rebar's CommonArgs the way a consumer would.
+/// Test harness that embeds librebar's CommonArgs the way a consumer would.
 #[derive(Parser, Debug)]
 #[command(name = "test-app")]
 struct TestCli {
     #[command(flatten)]
-    pub common: rebar::cli::CommonArgs,
+    pub common: librebar::cli::CommonArgs,
 
     #[command(subcommand)]
     pub command: Option<TestCommands>,
@@ -59,11 +59,14 @@ fn common_args_chdir() {
 #[test]
 fn color_choice_default_is_auto() {
     let cli = TestCli::parse_from(["test-app", "info"]);
-    assert!(matches!(cli.common.color, rebar::cli::ColorChoice::Auto));
+    assert!(matches!(cli.common.color, librebar::cli::ColorChoice::Auto));
 }
 
 #[test]
 fn color_choice_never() {
     let cli = TestCli::parse_from(["test-app", "--color", "never", "info"]);
-    assert!(matches!(cli.common.color, rebar::cli::ColorChoice::Never));
+    assert!(matches!(
+        cli.common.color,
+        librebar::cli::ColorChoice::Never
+    ));
 }

@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! let app = rebar::init("myapp").shutdown().start()?;
+//! let app = librebar::init("myapp").shutdown().start()?;
 //! let mut token = app.shutdown_token();
 //!
 //! tokio::select! {

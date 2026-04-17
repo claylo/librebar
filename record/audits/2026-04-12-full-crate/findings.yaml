@@ -1,0 +1,923 @@
+---
+audit_date: 2026-04-12
+scope: "Fresh full-library audit — src/, tests/, Cargo.toml, README.md, and feature-gated API surface"
+commit: 89431caaefbdffcdaf2f0a3077c891ad27e4625b
+assessment: |
+  rebar's supported verification path is clean: `cargo nextest run --workspace
+  --all-features` passes 88/88, `cargo +1.94.1 clippy --all-targets
+  --all-features -- -D warnings` passes, `cargo deny check --config
+  .config/deny.toml` passes, and the crate-wide `#![deny(unsafe_code)]`
+  posture holds. The sharpest problems are not memory safety bugs or failing
+  tests; they are mismatches at the documentation and API seam, where several
+  advertised capabilities are either not wired at all or require hidden setup.
+  **The Completeness Surface** is the most urgent: the shutdown example does
+  not compile or run as written, logging docs promise config-driven `log_dir`
+  behavior that the builder never implements, CLI scripting flags are parsed
+  but left inert, and OTEL docs overstate supported transport protocols.
+  **The Builder Contract Surface** narrows the advertised preloaded-config
+  escape hatch with unnecessary serde/default bounds. **The Error Handling
+  Surface** stays typed in most places, but cache expiry arithmetic can wrap
+  and several public APIs silently collapse or discard failure information.
+  **The Performance Surface** is structurally sound but pays avoidable
+  allocation tax in JSON logging and HTTP response handling. **The Supply
+  Chain Surface** is mostly clean on the supported path, with one remaining
+  benchmark-only RustSec warning inherited through `gungraun`. Overall
+  posture: solid core library with real polish debt at the docs-and-contracts
+  boundary.
+
+narratives:
+  - slug: completeness-surface
+    title: "The Completeness Surface"
+    thesis: "Several user-facing claims in the README and module docs are stronger than the code the crate actually ships."
+    verdict: "This is the highest-priority narrative because it changes what users can trust. The failures here are not speculative wishlist gaps; they are documented entry points and behaviors that either do nothing, require undocumented setup, or select a different transport than the docs promise."
+
+    flow:
+      - id: read-docs
+        label: "Read README/module docs"
+        type: start
+      - id: pick-capability
+        label: "Use advertised feature"
+        type: process
+      - id: docs-match
+        label: "Docs match shipped behavior?"
+        type: decision
+        no: mismatch
+      - id: use-feature
+        label: "Use feature as documented"
+        type: end
+      - id: mismatch
+        label: "Hit undocumented gap"
+        type: process
+        spine: false
+        findings:
+          - slug: shutdown-entry-point-is-not-usable-as-documented
+            label: "Shutdown docs fail"
+          - slug: logging-config-log-dir-is-never-read
+            label: "Config log_dir ignored"
+          - slug: common-args-json-and-version-flags-are-no-ops
+            label: "CLI flags are inert"
+          - slug: otel-http-json-protocol-is-documented-but-not-supported
+            label: "OTEL protocol drift"
+        next: use-feature
+
+    findings:
+      - slug: shutdown-entry-point-is-not-usable-as-documented
+        title: "Shutdown usage docs fail as written and hide the Tokio runtime requirement"
+        concern: significant
+        locations:
+          - path: src/shutdown.rs
+            start_line: 9
+            end_line: 16
+          - path: src/lib.rs
+            start_line: 234
+            end_line: 238
+          - path: src/shutdown.rs
+            start_line: 65
+            end_line: 67
+          - path: src/shutdown.rs
+            start_line: 107
+            end_line: 113
+        evidence: |
+          let app = rebar::init("myapp").shutdown().start()?;
+          let mut token = app.shutdown_token();
+
+          tokio::select! {
+              _ = do_work() => {},
+              _ = token.cancelled() => { /* cleanup */ },
+          }
+
+          pub fn shutdown_token(&self) -> Option<shutdown::ShutdownToken> {
+              self.shutdown_handle.as_ref().map(|h| h.token())
+          }
+
+          pub fn register_signals(&self) -> crate::Result<()> {
+              let runtime = tokio::runtime::Handle::try_current().map_err(crate::Error::NoRuntime)?;
+
+          impl ShutdownToken {
+              /// Wait until shutdown is triggered.
+              pub async fn cancelled(&mut self) {
+        evidence_lang: text
+        evidence_markers:
+          - lines: "2"
+            type: del
+            label: "token is an Option, so the example does not compile as shown"
+          - lines: "8-10"
+            type: mark
+            label: "the accessor is explicitly optional"
+          - lines: "12-13"
+            type: del
+            label: "start-up requires an active Tokio runtime"
+        mechanism: |
+          The published shutdown example is not reachable as written.
+          `app.shutdown_token()` returns `Option<ShutdownToken>`, so
+          `token.cancelled()` does not compile without an unwrap/expect. Even
+          after fixing that, `.shutdown().start()?` calls `register_signals()`,
+          which immediately requires a current Tokio runtime and returns
+          `Error::NoRuntime` in a normal synchronous `main()`. A developer
+          following the module docs hits both a type mismatch and an
+          undocumented runtime prerequisite before they can use the advertised
+          entry point.
+        remediation: |
+          Fix the docs to show an async entry point with `#[tokio::main]` (or
+          equivalent runtime setup) and unwrap the shutdown token explicitly.
+          Longer term, consider making the API stateful enough that enabling
+          shutdown yields a non-optional token accessor, or surface the runtime
+          requirement directly in the builder docs and error text.
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: "Mostly documentation and API ergonomics; no subsystem rewrite required."
+
+      - slug: logging-config-log-dir-is-never-read
+        title: "Builder docs promise `log_dir` from config, but logging never sees loaded config"
+        concern: significant
+        locations:
+          - path: README.md
+            start_line: 182
+            end_line: 186
+          - path: README.md
+            start_line: 218
+            end_line: 222
+          - path: src/lib.rs
+            start_line: 314
+            end_line: 317
+          - path: src/lib.rs
+            start_line: 605
+            end_line: 629
+        evidence: |
+          The logging system finds a writable log directory using this priority:
+
+          1. `{APP}_LOG_PATH` env var (exact file path)
+          2. `{APP}_LOG_DIR` env var (directory, appends `{app}.jsonl`)
+          3. `log_dir` from config
+
+          The builder wires everything in the correct initialization order:
+
+          1. Load config (if requested)
+          2. Initialize logging (reads log settings from config if available)
+          3. Return `App<C>` with everything wired up
+
+          let (log_layer, log_guard) = if do_logging {
+              let log_cfg =
+                  logging::LoggingConfig::from_app_name(&self.app_name).with_log_dir(self.log_dir);
+              let (layer, guard) = logging::build_json_layer(&log_cfg)?;
+
+          pub fn start(self) -> Result<App<C>> {
+              let (config, sources) = match self.config_source {
+                  CfgSource::Discover => {
+                      config::ConfigLoader::new(&self.inner.app_name)
+                          .with_project_search(&cwd)
+                          .load::<C>()?
+                  }
+                  CfgSource::File(path) => config::ConfigLoader::new(&self.inner.app_name)
+                      .with_user_config(false)
+                      .with_file(&path)
+                      .load::<C>()?,
+                  CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
+              };
+
+              let sub = self.inner.init_subsystems()?;
+        evidence_lang: text
+        evidence_markers:
+          - lines: "5"
+            type: del
+            label: "README promises config-driven log_dir selection"
+          - lines: "10"
+            type: del
+            label: "README promises logging reads loaded config"
+          - lines: "13-15"
+            type: mark
+            label: "logging config only reads self.log_dir"
+          - lines: "17-28"
+            type: mark
+            label: "loaded config is never threaded into init_subsystems"
+        mechanism: |
+          The README tells users that `log_dir` from their config participates
+          in log-target resolution and that the builder initializes logging
+          after loading config. The implementation does load `C`, but
+          `ConfiguredBuilder::start()` never passes that value into logging
+          initialization. `init_subsystems()` builds `LoggingConfig` only from
+          `self.log_dir`, which can only be set manually via
+          `.with_log_dir(...)`. A user who follows the documented
+          `Config { log_dir: ... }` pattern gets no effect because no code path
+          reads that field.
+        remediation: |
+          Either remove the config-based `log_dir` claim from the docs, or add
+          an explicit integration point that can derive logging settings from
+          the loaded config before `init_subsystems()` runs. In practice that
+          likely means a trait or callback such as
+          `.logging_from(|cfg| cfg.log_dir.clone())`, because the generic
+          builder cannot safely infer arbitrary field names.
+        chains:
+          enables: []
+          enabled_by: []
+          related: [common-args-json-and-version-flags-are-no-ops]
+        effort: medium
+        effort_notes: "Needs API design plus tests for builder + config interactions."
+
+      - slug: common-args-json-and-version-flags-are-no-ops
+        title: "`CommonArgs` advertises scripting flags that rebar never implements"
+        concern: significant
+        locations:
+          - path: README.md
+            start_line: 90
+            end_line: 97
+          - path: src/cli.rs
+            start_line: 49
+            end_line: 92
+        evidence: |
+          | Flag | Short | Effect |
+          |------|-------|--------|
+          | `--quiet` | `-q` | Only print errors |
+          | `--verbose` | `-v` | More detail (repeatable: `-vv` for trace) |
+          | `--json` | | Output as JSON for scripting |
+          | `--color` | | `auto`, `always`, or `never` |
+          | `--chdir` | `-C` | Run as if started in a different directory |
+          | `--version-only` | | Print version number and exit |
+
+          #[derive(Parser, Debug)]
+          pub struct CommonArgs {
+              #[arg(long)]
+              pub version_only: bool,
+              #[arg(short = 'C', long, global = true)]
+              pub chdir: Option<PathBuf>,
+              #[arg(short, long, global = true)]
+              pub quiet: bool,
+              #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+              pub verbose: u8,
+              #[arg(long, global = true, value_enum, default_value_t)]
+              pub color: ColorChoice,
+              #[arg(long, global = true)]
+              pub json: bool,
+          }
+
+          impl CommonArgs {
+              pub fn apply_color(&self) {
+                  self.color.apply();
+              }
+
+              pub fn apply_chdir(&self) -> std::io::Result<()> {
+                  if let Some(ref dir) = self.chdir {
+                      std::env::set_current_dir(dir)?;
+                  }
+                  Ok(())
+              }
+          }
+        evidence_lang: text
+        evidence_markers:
+          - lines: "5"
+            type: del
+            label: "README promises JSON output behavior"
+          - lines: "8"
+            type: del
+            label: "README promises version-only behavior"
+          - lines: "12-22"
+            type: mark
+            label: "the flags exist only as stored booleans"
+          - lines: "25-31"
+            type: mark
+            label: "helpers only implement color and chdir"
+        mechanism: |
+          The CLI docs present `--json` and `--version-only` as real behaviors
+          every rebar app receives. In code they are only parsed booleans.
+          `CommonArgs` offers helpers for color and chdir, while no helper or
+          builder path consumes `json` or `version_only`. A developer embedding
+          `CommonArgs` gets flags that silently do nothing unless each app
+          re-implements them from scratch, which breaks the promise of a
+          consistent shared CLI surface.
+        remediation: |
+          Either downgrade these to "raw flags you can inspect yourself" in the
+          docs, or add first-class helpers and builder wiring for them. At
+          minimum, expose utilities that format structured output and print
+          version-and-exit consistently so the advertised behavior exists in
+          the library rather than in every downstream app.
+        chains:
+          enables: []
+          enabled_by: []
+          related: [logging-config-log-dir-is-never-read]
+        effort: medium
+        effort_notes: "Needs small API additions and CLI-surface integration tests."
+
+      - slug: otel-http-json-protocol-is-documented-but-not-supported
+        title: "OTEL docs advertise `http/json`, but the feature set only ships protobuf-over-HTTP"
+        concern: moderate
+        locations:
+          - path: src/otel.rs
+            start_line: 17
+            end_line: 20
+          - path: Cargo.toml
+            start_line: 50
+            end_line: 53
+          - path: src/otel.rs
+            start_line: 152
+            end_line: 169
+        evidence: |
+          //! # Environment variables
+          //!
+          //! - `OTEL_EXPORTER_OTLP_ENDPOINT` — collector URL (required for export)
+          //! - `OTEL_EXPORTER_OTLP_PROTOCOL` — `http/protobuf` (default), `http/json`, or `grpc`
+
+          # Feature: otel
+          opentelemetry = { version = "0.31", features = ["trace"], optional = true }
+          opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"], optional = true }
+          opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "hyper-client", "trace"], optional = true }
+
+          fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::SpanExporter> {
+              match protocol {
+                  #[cfg(feature = "otel-grpc")]
+                  "grpc" => opentelemetry_otlp::SpanExporter::builder()
+                      .with_tonic()
+                      .with_endpoint(endpoint)
+                      .build()
+                      .map_err(crate::Error::OtelInit),
+
+                  // http/protobuf, http/json, or anything else — use HTTP transport
+                  _ => opentelemetry_otlp::SpanExporter::builder()
+                      .with_http()
+                      .with_endpoint(endpoint)
+                      .build()
+                      .map_err(crate::Error::OtelInit),
+              }
+          }
+        evidence_lang: text
+        evidence_markers:
+          - lines: "4"
+            type: del
+            label: "docs claim http/json is supported"
+          - lines: "8"
+            type: mark
+            label: "only http-proto is enabled in dependencies"
+          - lines: "18-21"
+            type: del
+            label: "http/json is routed through the same HTTP/protobuf path"
+        mechanism: |
+          The module docs explicitly tell users that
+          `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` is supported. The dependency
+          configuration only enables `http-proto`, and the exporter builder
+          routes both `http/protobuf` and `http/json` through the same
+          `with_http()` path. That means a user selecting `http/json` does not
+          get JSON OTLP; they still get protobuf-over-HTTP, with no warning
+          that the requested protocol is unavailable.
+        remediation: |
+          Remove `http/json` from the documented protocol list unless the crate
+          actually enables and selects a JSON OTLP transport. If JSON transport
+          is not planned, reject unknown protocol values explicitly so users do
+          not get silent protocol mismatch.
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: "Either a doc correction plus validation, or a targeted transport-support expansion."
+
+  - slug: builder-contract-surface
+    title: "The Builder Contract Surface"
+    thesis: "The builder mostly composes well, but its preloaded-config escape hatch inherits bounds from the file-loading path that it does not need."
+    verdict: "This is a design bug rather than a runtime failure, but it lands directly on users trying to treat rebar as a library. The advertised escape hatch exists in the API, then narrows itself with unrelated trait bounds at the final `start()` call."
+
+    findings:
+      - slug: preloaded-config-builder-requires-unused-serde-bounds
+        title: "Preloaded config path still requires deserialization-only bounds"
+        concern: significant
+        locations:
+          - path: src/lib.rs
+            start_line: 555
+            end_line: 626
+        evidence: |
+          pub fn with_config<C>(self, config: C) -> ConfiguredBuilder<C>
+          where
+              C: serde::Serialize,
+          {
+              ConfiguredBuilder {
+                  inner: self.inner,
+                  config_source: CfgSource::Preloaded(config),
+              }
+          }
+          }
+
+          #[cfg(feature = "config")]
+          enum CfgSource<C> {
+              Discover,
+              File(camino::Utf8PathBuf),
+              Preloaded(C),
+          }
+
+          #[cfg(feature = "config")]
+          pub struct ConfiguredBuilder<C> {
+              inner: BuilderInner,
+              config_source: CfgSource<C>,
+          }
+
+          #[cfg(feature = "config")]
+          impl<C> ConfiguredBuilder<C>
+          where
+              C: serde::de::DeserializeOwned + Default + serde::Serialize,
+          {
+              pub fn start(self) -> Result<App<C>> {
+                  let (config, sources) = match self.config_source {
+                      CfgSource::Discover => {
+                          config::ConfigLoader::new(&self.inner.app_name)
+                              .with_project_search(&cwd)
+                              .load::<C>()?
+                      }
+                      CfgSource::File(path) => config::ConfigLoader::new(&self.inner.app_name)
+                          .with_user_config(false)
+                          .with_file(&path)
+                          .load::<C>()?,
+                      CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-8"
+            type: mark
+            label: "with_config advertises a preloaded value path"
+          - lines: "21-24"
+            type: del
+            label: "start() adds DeserializeOwned + Default bounds to every path"
+          - lines: "33"
+            type: mark
+            label: "the preloaded branch itself does not deserialize anything"
+        mechanism: |
+          The builder advertises `with_config` as an escape hatch for
+          already-materialized configuration, but the only public `start` for
+          `ConfiguredBuilder<C>` still requires
+          `C: DeserializeOwned + Default + Serialize`. Those bounds are only
+          needed for the discovery/file-loading paths; the `Preloaded` branch
+          just returns the supplied `config`. As written, callers with
+          runtime-only config types hit an avoidable compile-time dead end, and
+          the type-state builder fails to distinguish "needs loading" from
+          "already has C".
+        remediation: |
+          Split the preloaded path into its own builder state, or add a
+          dedicated `start` path for `CfgSource::Preloaded` that does not
+          require serde/default bounds. Keep deserialization constraints only
+          on the discovery/file-loading states.
+        temporal:
+          introduced: "2026-04-08"
+          last_modified: "2026-04-09"
+          commit_count: 7
+          monthly_commits: [0,0,0,0,0,0,0,0,0,0,0,7]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: medium
+        effort_notes: "Needs a type-state split or a separate impl for preloaded config."
+
+  - slug: error-handling-surface
+    title: "The Error Handling Surface"
+    thesis: "The crate uses typed errors consistently, but a few public entry points still overflow, discard cleanup failures, or erase the distinction between failure and a legitimate negative result."
+    verdict: "This surface is disciplined enough that the findings cluster into a small set of patterns rather than a pervasive error culture problem. The cache TTL overflow is the most concrete behavioral bug; the other issues are loss-of-signal problems that will frustrate callers and operators once they appear in production."
+
+    flow:
+      - id: caller-enters
+        label: "Caller uses cache or update API"
+        type: start
+      - id: fallible-step
+        label: "Fallible work happens"
+        type: process
+      - id: errors-preserved
+        label: "Failure stays visible?"
+        type: decision
+        no: error-hidden
+      - id: caller-reacts
+        label: "Caller can react correctly"
+        type: end
+      - id: error-hidden
+        label: "Failure becomes silent or ambiguous"
+        type: process
+        spine: false
+        findings:
+          - slug: cache-set-ttl-overflow
+            label: "TTL overflow"
+          - slug: cache-clear-drops-delete-errors
+            label: "Clear hides failure"
+          - slug: update-check-hides-check-failures
+            label: "None means anything"
+        next: caller-reacts
+
+    findings:
+      - slug: cache-set-ttl-overflow
+        title: "Caller-supplied cache TTL can overflow expiry arithmetic"
+        concern: significant
+        locations:
+          - path: src/cache.rs
+            start_line: 69
+            end_line: 80
+        evidence: |
+          pub fn set(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
+              std::fs::create_dir_all(&self.dir).map_err(CacheError::from)?;
+
+              let now = SystemTime::now()
+                  .duration_since(UNIX_EPOCH)
+                  .unwrap_or_default();
+              let expires_at = now.as_secs() + ttl.as_secs();
+
+              let entry = CacheEntry {
+                  expires_at,
+                  value: base64::engine::general_purpose::STANDARD.encode(value),
+              };
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "7"
+            type: del
+            label: "unchecked u64 addition can panic or wrap"
+        mechanism: |
+          A library caller controls `ttl`, and `now.as_secs() + ttl.as_secs()`
+          uses unchecked `u64` addition. Extremely large durations can panic in
+          debug builds and silently wrap in release builds, producing a bogus
+          expiry timestamp that can invalidate cache semantics. This is not
+          theoretical arithmetic pedantry; it is a public API taking unbounded
+          caller input and using wraparound-sensitive math for visible behavior.
+        remediation: |
+          Validate TTL arithmetic before constructing the cache entry. Use
+          checked or saturating addition and return a typed error when the
+          requested expiry cannot be represented.
+        temporal:
+          introduced: "2026-04-09"
+          last_modified: "2026-04-09"
+          commit_count: 2
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: "Localized to one calculation and, if desired, one new error variant."
+
+      - slug: cache-clear-drops-delete-errors
+        title: "Cache clearing reports success after discarding per-entry read and delete failures"
+        concern: moderate
+        locations:
+          - path: src/cache.rs
+            start_line: 145
+            end_line: 159
+        evidence: |
+          pub fn clear(&self) -> Result<()> {
+              if self.dir.exists() {
+                  for entry in std::fs::read_dir(&self.dir)
+                      .map_err(CacheError::from)?
+                      .flatten()
+                  {
+                      let path = entry.path();
+                      if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                          // Best-effort: skip files that can't be removed (permissions, etc.)
+                          let _ = std::fs::remove_file(&path);
+                      }
+                  }
+              }
+              Ok(())
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "4-5"
+            type: del
+            label: "iterator entry errors are flattened away"
+          - lines: "9-10"
+            type: del
+            label: "delete failures are discarded"
+        mechanism: |
+          `read_dir(...).flatten()` silently drops iterator errors for
+          individual directory entries, and `let _ = std::fs::remove_file(...)`
+          suppresses deletion failures. As a result, `Cache::clear` can return
+          `Ok(())` even when some cache files were unreadable or could not be
+          removed, so callers cannot tell whether the cache was actually
+          cleared.
+        remediation: |
+          Preserve per-entry failures instead of discarding them. Return the
+          first deletion/read error, or add a distinct best-effort API that
+          explicitly reports partial cleanup rather than signaling
+          unconditional success.
+        temporal:
+          introduced: "2026-04-09"
+          last_modified: "2026-04-09"
+          commit_count: 3
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: "Localized behavior change, but the API contract needs an explicit choice."
+
+      - slug: update-check-hides-check-failures
+        title: "Update checks collapse transport and parse failures into the same None as no-update"
+        concern: moderate
+        locations:
+          - path: src/update.rs
+            start_line: 89
+            end_line: 138
+        evidence: |
+          pub async fn check(&self) -> Option<UpdateInfo> {
+              if self.is_suppressed() {
+                  tracing::debug!("update check suppressed by env");
+                  return None;
+              }
+
+              if let Some(cache) = crate::cache::Cache::default_for(&self.app_name)
+                  && let Ok(Some(cached)) = cache.get(CACHE_KEY)
+                  && let Ok(version) = String::from_utf8(cached)
+              {
+                  tracing::debug!(cached_version = %version, "using cached version check");
+                  return self.compare_versions(&version);
+              }
+
+              let client =
+                  crate::http::HttpClient::from_app(&self.app_name, &self.current_version).ok()?;
+
+              let resp = match client.get(&url).await {
+                  Ok(r) => r,
+                  Err(e) => {
+                      tracing::debug!(error = %e, "update check failed");
+                      return None;
+                  }
+              };
+
+              if !resp.is_success() {
+                  tracing::debug!(status = resp.status, "GitHub API returned non-200");
+                  return None;
+              }
+
+              let json: serde_json::Value = match resp.json() {
+                  Ok(v) => v,
+                  Err(e) => {
+                      tracing::debug!(error = %e, "failed to parse release response");
+                      return None;
+                  }
+              };
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1"
+            type: del
+            label: "public API exposes only Option"
+          - lines: "14-15"
+            type: del
+            label: "client construction failure becomes None"
+          - lines: "19-22"
+            type: del
+            label: "network failure becomes None"
+          - lines: "25-28"
+            type: del
+            label: "HTTP failure becomes None"
+          - lines: "31-36"
+            type: del
+            label: "parse failure becomes None"
+        mechanism: |
+          This public library API performs several fallible operations but
+          exposes only `Option<UpdateInfo>`. Client construction failure,
+          request errors, non-2xx responses, malformed JSON, missing fields,
+          invalid cached bytes, and cache write failures are all collapsed into
+          `None`, which is also the normal "no update available" outcome.
+          Debug logs are not a stable diagnostic channel for library callers,
+          so callers cannot reliably distinguish transient infrastructure
+          failure from a genuine negative result.
+        remediation: |
+          Expose a typed error channel for failed checks, for example by
+          returning `Result<Option<UpdateInfo>, UpdateError>` or by adding a
+          second API that preserves failure reasons while keeping the current
+          convenience wrapper.
+        temporal:
+          introduced: "2026-04-09"
+          last_modified: "2026-04-09"
+          commit_count: 3
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: medium
+        effort_notes: "Localized code change, but the public contract likely needs an additive API."
+
+  - slug: performance-surface
+    title: "The Performance Surface"
+    thesis: "The crate is not algorithmically troubled, but two hot-path implementations pay avoidable allocation and copy costs that will show up first under logging-heavy or network-heavy workloads."
+    verdict: "These are not premature-optimization complaints. Both findings sit on surfaces the crate explicitly sells: structured logging and HTTP/update helpers. The code is clear, but it currently trades that clarity for repeated heap traffic in steady-state paths."
+
+    findings:
+      - slug: logging-layer-clones-span-fields-per-event
+        title: "JSON logging clones span field maps and re-allocates field keys on every event"
+        concern: significant
+        locations:
+          - path: src/logging.rs
+            start_line: 437
+            end_line: 515
+        evidence: |
+          if let Some(scope) = ctx.event_scope(event) {
+              for span in scope.from_root() {
+                  if let Some(fields) = span.extensions().get::<SpanFields>() {
+                      map.extend(fields.values.clone());
+                  }
+              }
+          }
+
+          let mut visitor = JsonVisitor::default();
+          event.record(&mut visitor);
+          map.extend(visitor.values);
+
+          if let Ok(mut buf) = serde_json::to_vec(&Value::Object(map)) {
+              buf.push(b'\n');
+              let mut writer = self.writer.make_writer();
+              if writer.write_all(&buf).is_err() {
+                  eprintln!("[rebar] failed to write log entry to sink");
+              }
+          }
+          }
+
+          #[derive(Clone, Debug)]
+          struct SpanFields {
+              values: Map<String, Value>,
+          }
+
+          #[derive(Default)]
+          struct JsonVisitor {
+              values: Map<String, Value>,
+          }
+
+          impl tracing::field::Visit for JsonVisitor {
+              fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+                  self.values
+                      .insert(field.name().to_string(), Value::Bool(value));
+              }
+
+              fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                  self.values
+                      .insert(field.name().to_string(), Value::String(value.to_string()));
+              }
+
+              fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                  self.values.insert(
+                      field.name().to_string(),
+                      Value::String(format!("{value:?}")),
+                  );
+              }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-4"
+            type: del
+            label: "each event clones the accumulated span-field map"
+          - lines: "33-34"
+            type: mark
+            label: "field names are re-owned as Strings on every visit"
+          - lines: "37-38"
+            type: mark
+            label: "borrowed strings are copied into new heap values"
+          - lines: "41-44"
+            type: mark
+            label: "debug fields are formatted into fresh Strings"
+        mechanism: |
+          `JsonLogLayer::on_event` is the steady-state path for every emitted
+          log event once logging is enabled. It walks the active span stack and
+          clones each stored `Map<String, Value>` into the event object, then
+          the visitor allocates owned `String` keys for every field name and
+          formats debug fields into new strings before `serde_json` serializes
+          the result. Under nested spans or high event rates this turns one
+          logical event into repeated hash-map cloning, string allocation, and
+          copying work that profiles will attribute to logging rather than
+          application code.
+        remediation: |
+          Keep span fields in a representation that can be merged without
+          cloning entire maps per event, and serialize directly into the output
+          buffer so static field names and borrowed string data are not
+          re-owned on every visit. A writer-based visitor or cached per-span
+          encoding would remove most of the avoidable heap traffic.
+        temporal:
+          introduced: "2026-04-08"
+          last_modified: "2026-04-09"
+          commit_count: 3
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: medium
+        effort_notes: "Local redesign of span-field storage and JSON emission, isolated to logging."
+
+      - slug: http-response-body-is-copied-once-and-often-cloned-again
+        title: "HTTP response handling duplicates body buffers on the request path"
+        concern: moderate
+        locations:
+          - path: src/http.rs
+            start_line: 124
+            end_line: 174
+        evidence: |
+          let body = resp
+              .into_body()
+              .collect()
+              .await
+              .map_err(HttpError::Body)?
+              .to_bytes();
+
+          Ok(Response {
+              status,
+              body: body.to_vec(),
+          })
+          };
+
+          pub struct Response {
+              pub status: u16,
+              body: Vec<u8>,
+          }
+
+          impl Response {
+              pub fn text(&self) -> std::result::Result<String, std::string::FromUtf8Error> {
+                  String::from_utf8(self.body.clone())
+              }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-10"
+            type: del
+            label: "collected Bytes are copied into a fresh Vec<u8>"
+          - lines: "19-20"
+            type: del
+            label: "text() clones the full body again"
+        mechanism: |
+          `HttpClient::get` is the hot path for the crate's `http` surface and
+          is also exercised by the update checker. After Hyper has already
+          consolidated the response into `Bytes`, the implementation
+          immediately duplicates that buffer with `to_vec()` to build
+          `Response`. Callers that use the convenient `text()` accessor then
+          pay a second full-body clone. On larger payloads or repeated polling
+          endpoints this adds an unconditional O(n) memcpy cost before any
+          caller-specific processing.
+        remediation: |
+          Store the response body in `Bytes` or another cheaply
+          clonable/borrowable buffer and keep owned decoding on consuming APIs.
+          The shared-reference accessor should stay borrow-based so callers do
+          not need to duplicate the body just to inspect text.
+        temporal:
+          introduced: "2026-04-08"
+          last_modified: "2026-04-09"
+          commit_count: 3
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: "Local to `Response` storage and conversion helpers."
+
+  - slug: supply-chain-surface
+    title: "The Supply-Chain Surface"
+    thesis: "The supported dependency gate is mostly clean, but one optional benchmark feature still inherits an upstream unmaintained crate warning."
+    verdict: "This is not a default-surface incident. The warning is feature-scoped and benchmark-only. It still belongs in the report because the feature is public, the warning is current, and upstream maintenance risk compounds when it is left undocumented."
+
+    findings:
+      - slug: bench-gungraun-pulls-unmaintained-bincode
+        title: "The benchmark-only gungraun feature inherits an unmaintained bincode dependency"
+        concern: advisory
+        locations:
+          - path: Cargo.toml
+            start_line: 82
+            end_line: 83
+          - path: record/audits/2026-04-12-full-crate/cargo-audit.txt
+            start_line: 1
+            end_line: 12
+        evidence: |
+          # Feature: bench-gungraun (instruction-count via Valgrind/Callgrind)
+          gungraun = { version = "0.17", optional = true }
+
+          Crate:     bincode
+          Version:   1.3.3
+          Warning:   unmaintained
+          Title:     Bincode is unmaintained
+          Date:      2025-12-16
+          ID:        RUSTSEC-2025-0141
+          URL:       https://rustsec.org/advisories/RUSTSEC-2025-0141
+          Dependency tree:
+          bincode 1.3.3
+          └── gungraun 0.17.2
+              └── rebar 0.1.0
+        evidence_lang: text
+        evidence_markers:
+          - lines: "2"
+            type: mark
+            label: "feature opts into gungraun"
+          - lines: "5-8"
+            type: del
+            label: "cargo audit reports current unmaintained-crate warning"
+          - lines: "10-12"
+            type: del
+            label: "warning reaches rebar only through bench-gungraun"
+        mechanism: |
+          The current `cargo audit` run reports `RUSTSEC-2025-0141`:
+          `bincode 1.3.3` is unmaintained and reaches this repository through
+          `gungraun 0.17.2`. Because `bench-gungraun` is a dev-facing optional
+          feature, this is not a runtime risk for ordinary consumers of rebar.
+          It is still a repository-owned maintenance edge: benchmark helpers
+          are part of the public crate surface, and anyone enabling that
+          feature inherits a dependency with no active steward.
+        remediation: |
+          Check whether a newer `gungraun` release removes the `bincode` edge.
+          If not, document the feature as carrying an accepted benchmark-only
+          warning or consider demoting it to out-of-tree benchmark guidance
+          rather than a first-class crate feature.
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: small
+        effort_notes: "Mostly blocked on upstream gungraun packaging decisions."
+
+summary:
+  counts:
+    critical: 0
+    significant: 6
+    moderate: 4
+    advisory: 1
+    note: 0

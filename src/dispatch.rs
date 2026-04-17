@@ -7,7 +7,7 @@
 //!
 //! ```ignore
 //! // In the match arm for unknown subcommands:
-//! match rebar::dispatch::run("myapp", "deploy", &args)? {
+//! match librebar::dispatch::run("myapp", "deploy", &args)? {
 //!     Some(status) => std::process::exit(status.code().unwrap_or(1)),
 //!     None => eprintln!("unknown command: deploy"),
 //! }

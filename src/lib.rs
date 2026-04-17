@@ -1,4 +1,4 @@
-//! Rebar: Rust application foundation crate.
+//! Liblibrebar: opinionated application foundation for Rust CLIs and services.
 //!
 //! Feature-gated modules for CLI, config, logging, and more.
 //! Each module is usable independently (escape hatches) or wired
@@ -64,16 +64,16 @@
 //!
 //! ```toml
 //! # Minimal CLI tool
-//! rebar = { version = "0.1", features = ["cli", "config", "logging"] }
+//! librebar = { version = "0.1", features = ["cli", "config", "logging"] }
 //!
 //! # CLI tool with update checks
-//! rebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "update"] }
+//! librebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "update"] }
 //!
 //! # Long-running service with observability
-//! rebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
+//! librebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
 //!
 //! # Plugin-extensible CLI (git-style subcommands)
-//! rebar = { version = "0.1", features = ["cli", "config", "logging", "dispatch"] }
+//! librebar = { version = "0.1", features = ["cli", "config", "logging", "dispatch"] }
 //! ```
 //!
 //! # Builder usage
@@ -86,14 +86,14 @@
 //! #[derive(Parser)]
 //! struct Cli {
 //!     #[command(flatten)]
-//!     pub common: rebar::cli::CommonArgs,
+//!     pub common: librebar::cli::CommonArgs,
 //!     #[command(subcommand)]
 //!     pub command: Option<Commands>,
 //! }
 //!
 //! let cli = Cli::parse();
 //!
-//! let app = rebar::init(env!("CARGO_PKG_NAME"))
+//! let app = librebar::init(env!("CARGO_PKG_NAME"))
 //!     .with_version(env!("CARGO_PKG_VERSION"))
 //!     .with_cli(cli.common)
 //!     .config::<Config>()
@@ -441,7 +441,7 @@ macro_rules! builder_methods {
         /// Set the application version for crash dumps and OTEL resource
         /// attributes.
         ///
-        /// If not set, crash and OTEL use the rebar crate version.
+        /// If not set, crash and OTEL use the librebar crate version.
         pub fn with_version(mut self, version: &str) -> Self {
             self.inner.version = Some(version.to_string());
             self
@@ -449,10 +449,10 @@ macro_rules! builder_methods {
     };
 }
 
-/// Start building a rebar application.
+/// Start building a librebar application.
 ///
 /// ```ignore
-/// let app = rebar::init(env!("CARGO_PKG_NAME"))
+/// let app = librebar::init(env!("CARGO_PKG_NAME"))
 ///     .with_cli(cli.common)
 ///     .config::<Config>()
 ///     .logging()
@@ -479,7 +479,7 @@ pub fn init(app_name: &str) -> Builder {
     }
 }
 
-/// Builder for rebar application initialization.
+/// Builder for librebar application initialization.
 ///
 /// Wires config discovery, logging setup, and CLI args in the correct
 /// initialization order.

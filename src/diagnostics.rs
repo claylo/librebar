@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use rebar::diagnostics::{DoctorCheck, DoctorRunner, CheckResult, CheckStatus};
+//! use librebar::diagnostics::{DoctorCheck, DoctorRunner, CheckResult, CheckStatus};
 //!
 //! struct ConfigCheck;
 //!

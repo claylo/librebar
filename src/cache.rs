@@ -9,20 +9,20 @@
 //! ```no_run
 //! use std::time::Duration;
 //!
-//! let cache = rebar::cache::Cache::default_for("myapp").unwrap();
+//! let cache = librebar::cache::Cache::default_for("myapp").unwrap();
 //! cache.set("api-response", b"cached data", Duration::from_secs(3600)).unwrap();
 //!
 //! if let Some(data) = cache.get("api-response").unwrap() {
 //!     // Use cached data
 //!     # drop(data);
 //! }
-//! # Ok::<(), rebar::Error>(())
+//! # Ok::<(), librebar::Error>(())
 //! ```
 //!
 //! # Cache directory
 //!
-//! Default: `~/Library/Caches/{app}/rebar/` on macOS,
-//! `$XDG_CACHE_HOME/{app}/rebar/` on Linux.
+//! Default: `~/Library/Caches/{app}/librebar/` on macOS,
+//! `$XDG_CACHE_HOME/{app}/librebar/` on Linux.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -172,9 +172,9 @@ impl Cache {
 
 /// Get the default cache directory for an application.
 ///
-/// - macOS: `~/Library/Caches/{app}/rebar/`
-/// - Linux: `$XDG_CACHE_HOME/{app}/rebar/`
+/// - macOS: `~/Library/Caches/{app}/librebar/`
+/// - Linux: `$XDG_CACHE_HOME/{app}/librebar/`
 pub fn default_cache_dir(app_name: &str) -> Option<PathBuf> {
     let proj_dirs = directories::ProjectDirs::from("", "", app_name)?;
-    Some(proj_dirs.cache_dir().join("rebar"))
+    Some(proj_dirs.cache_dir().join("librebar"))
 }

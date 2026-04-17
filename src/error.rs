@@ -1,8 +1,8 @@
-//! Error types for rebar.
+//! Error types for librebar.
 
 use thiserror::Error;
 
-/// Errors that can occur during rebar initialization and operation.
+/// Errors that can occur during librebar initialization and operation.
 #[derive(Error, Debug)]
 pub enum Error {
     /// Configuration file could not be parsed.
@@ -85,7 +85,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-/// Result type alias using rebar's [`enum@Error`].
+/// Result type alias using librebar's [`enum@Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
 // ─── Per-module error enums ─────────────────────────────────────────
