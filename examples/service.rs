@@ -40,6 +40,10 @@
 //!     -- -C examples run
 //! ```
 //!
+//! For a full end-to-end setup (including the Docker recipe for running a
+//! Jaeger all-in-one receiver locally so you can see the spans), see the
+//! "End-to-end OTEL export" section of the project README.
+//!
 //! # What it demonstrates
 //!
 //! - `#[tokio::main(flavor = "current_thread")]` — single-threaded runtime is enough
