@@ -1,0 +1,8 @@
+# Sample config for the `doctor-bundle` example.
+#
+# Discovered via the standard walk-up from the current directory.
+# `bundle_dir` is intentionally unset so readers see the default
+# (platform log directory) in the `info` subcommand output.
+
+log_level = "info"
+# bundle_dir = "/tmp/doctor-bundle"

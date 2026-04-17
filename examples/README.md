@@ -13,6 +13,7 @@ Every example is a full `main()` you can read top-to-bottom.
 | [`service`](service.rs) | Long-running async service: shutdown token, crash dumps, optional OTEL export | `cli`, `config`, `logging`, `shutdown`, `crash`, `otel` |
 | [`updater`](updater.rs) | GitHub releases check: real HTTPS call, 24h cache, `{APP}_NO_UPDATE_CHECK` gate | `cli`, `config`, `logging`, `http`, `cache`, `update` |
 | [`plugin-cli`](plugin-cli/main.rs) | Git-style external subcommand dispatch with a paired plugin binary | `cli`, `config`, `logging`, `dispatch` |
+| [`doctor-bundle`](doctor-bundle.rs) | Health checks with `DoctorRunner` + `DebugBundle` tar.gz for bug reports | `cli`, `config`, `logging`, `diagnostics` |
 
 ## Running
 
@@ -27,6 +28,8 @@ cargo run --example updater \
     --features "cli,config,logging,http,cache,update" -- --help
 cargo run --example plugin-cli \
     --features "cli,config,logging,dispatch" -- --help
+cargo run --example doctor-bundle \
+    --features "cli,config,logging,diagnostics" -- --help
 ```
 
 The `plugin-cli` example ships two binaries — the main CLI plus a paired
