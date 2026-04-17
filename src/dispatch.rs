@@ -5,12 +5,16 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! // In the match arm for unknown subcommands:
+//! ```no_run
+//! # fn main() -> librebar::Result<()> {
+//! // Typical use: in the match arm for an unknown subcommand.
+//! let args: Vec<String> = std::env::args().skip(2).collect();
 //! match librebar::dispatch::run("myapp", "deploy", &args)? {
 //!     Some(status) => std::process::exit(status.code().unwrap_or(1)),
 //!     None => eprintln!("unknown command: deploy"),
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use std::ffi::OsStr;

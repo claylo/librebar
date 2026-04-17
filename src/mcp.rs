@@ -5,12 +5,16 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use librebar::mcp::ServiceExt;
-//!
-//! let server = MyServer::new();
-//! let service = server.serve(librebar::mcp::transport_stdio()).await?;
-//! service.waiting().await?;
+//! ```no_run
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // `transport_stdio()` pairs tokio stdin/stdout for rmcp's JSON-RPC loop.
+//! // Pass it to your rmcp `ServerHandler::serve(...)` call, then await the
+//! // returned service's `.waiting()` future to block until the client
+//! // disconnects. See the `mcp-server` example for a full implementation.
+//! let transport = librebar::mcp::transport_stdio();
+//! # let _ = transport;
+//! # Ok(())
+//! # }
 //! ```
 
 // Re-export key types consumers need
