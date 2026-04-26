@@ -55,14 +55,12 @@ Add librebar to your `Cargo.toml` with the features you need:
 
 ```toml
 [dependencies]
-librebar = { git = "https://github.com/claylo/librebar", features = ["cli", "config", "logging"] }
+librebar = { version = "0.1", features = ["cli", "config", "logging"] }
 ```
 
 No default features. You opt into exactly what you need.
 
 ## Features
-
-No default features. Opt in to exactly what your application needs.
 
 ### Core application
 
