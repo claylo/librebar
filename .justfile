@@ -42,3 +42,26 @@ cov:
   @cargo llvm-cov report --summary-only --json --output-path target/llvm-cov/summary.json
 
 check: fmt clippy deny test doc-test
+
+# Check for outdated dependencies (root only, no transitive noise)
+outdated:
+    cargo outdated --workspace --root-deps-only
+
+# Safe update: respects semver constraints, only touches Cargo.lock
+update:
+    cargo update --workspace --verbose
+
+# Upgrade Cargo.toml to latest compatible versions
+upgrade:
+    cargo upgrade
+    cargo update --workspace
+
+# The nuclear option: upgrade to latest incompatible versions (breaking changes)
+upgrade-breaking:
+    cargo upgrade --incompatible
+    cargo update --workspace
+
+# See what WOULD update without doing it
+check-updates:
+    cargo update --workspace --dry-run
+
