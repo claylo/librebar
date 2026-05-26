@@ -33,6 +33,22 @@ fn lock_released_on_guard_drop() {
 }
 
 #[test]
+fn second_acquire_fails_while_held() {
+    let tmp = TempDir::new().unwrap();
+    let lock = Lockfile::new("test-app", tmp.path());
+    let _guard = lock.try_acquire().unwrap();
+
+    let lock2 = Lockfile::new("test-app", tmp.path());
+    let err = lock2
+        .try_acquire()
+        .expect_err("should fail while lock is held");
+    assert!(
+        matches!(err, librebar::Error::Lock(_)),
+        "expected Error::Lock, got: {err:?}"
+    );
+}
+
+#[test]
 fn lock_dir_default_contains_app_name() {
     let dir = librebar::lockfile::default_lock_dir("test-app");
     let path = dir.to_string_lossy();

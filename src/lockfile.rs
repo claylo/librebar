@@ -18,8 +18,6 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
-
 use crate::{Error, Result};
 
 // ─── Platform lock directory ─────────────────────────────────────────
@@ -106,9 +104,9 @@ impl Lockfile {
             .truncate(false)
             .open(&self.path)?;
 
-        file.try_lock_exclusive().map_err(|e| {
+        file.try_lock().map_err(|e| {
             Error::Lock(std::io::Error::new(
-                e.kind(),
+                std::io::Error::from(e).kind(),
                 format!("another instance holds the lock: {}", self.path.display()),
             ))
         })?;
