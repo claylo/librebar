@@ -35,7 +35,7 @@ owo-colors = { version = "4.3", features = ["supports-colors"], optional = true 
 
 # Feature: config
 toml = { version = "1.1", optional = true }
-serde-saphyr = { version = "0.0.27", optional = true }
+serde-saphyr = { version = "0.0.29", optional = true }
 serde_json = { version = "1.0", optional = true }
 camino = { version = "1.2", features = ["serde1"], optional = true }
 directories = { version = "6.0", optional = true }
@@ -54,7 +54,7 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 tracing-opentelemetry = { version = "0.33", optional = true }
 
 # Feature: mcp
-rmcp = { version = "1.7", features = ["server", "transport-io"], optional = true }
+rmcp = { version = "2.2", features = ["server", "transport-io"], optional = true }
 
 # Feature: http
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"], optional = true }
@@ -64,7 +64,10 @@ hyper-rustls = { version = "0.27", features = ["http1", "http2", "ring", "webpki
 rustls = { version = "0.23.40", default-features = false, optional = true }
 
 # Feature: cache
-base64 = { version = "0.22", optional = true }
+# default-features = false to opt out of `simd-unsafe`, which base64 0.23
+# added to its default feature set. `std` re-enables `alloc`; the cache module
+# only needs STANDARD encode/decode, which the safe implementation provides.
+base64 = { version = "0.23", default-features = false, features = ["std"], optional = true }
 
 # Feature: dispatch
 which = { version = "8.0", optional = true }

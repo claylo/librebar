@@ -63,8 +63,8 @@ use librebar::mcp::ServiceExt;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, Content, ListToolsResult, PaginatedRequestParams,
-        ServerCapabilities, ServerInfo, Tool,
+        CallToolRequestParams, CallToolResult, ContentBlock, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
     },
     service::RequestContext,
 };
@@ -337,6 +337,6 @@ impl ServerHandler for GreetServer {
 
         let output = format!("{}, {}!", self.greeting, name);
         tracing::info!(name = %name, "greet tool invoked");
-        Ok(CallToolResult::success(vec![Content::text(output)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
 }

@@ -45,23 +45,10 @@ db-urls = ["https://github.com/RustSec/advisory-db"]
 
 # Accepted advisories.
 #
-# RUSTSEC-2025-0141 — bincode 1.3.3 is unmaintained.
-#   Reached only through the optional `bench-gungraun` feature, which is a
-#   dev-facing one-shot instruction-count benchmark harness (Valgrind/
-#   Callgrind). gungraun 0.18.1 still pins `bincode = "1"` in its workspace,
-#   so upgrading gungraun does not remove the edge.
-#   Accepted because:
-#     1. No runtime impact on default crate consumers — `bench-gungraun` is
-#        opt-in and is not part of any default feature set.
-#     2. bincode is used by gungraun to serialize benchmark result data, not
-#        to parse untrusted input.
-#     3. The migration path is upstream-only; librebar cannot resolve this edge
-#        without replacing the benchmark harness entirely.
-#   Revisit if gungraun migrates off bincode 1.x, or if librebar swaps benchmark
-#   harnesses.
-ignore = [
-    "RUSTSEC-2025-0141",
-]
+# Empty. RUSTSEC-2025-0141 (bincode 1.3.3 unmaintained) was ignored here while
+# gungraun pinned `bincode = "1"`. gungraun 0.19.4 migrated to `bincode-next`
+# 2.x, so bincode 1.x is no longer in the graph and the suppression was removed.
+ignore = []
 
 # ==============================================================================
 # Banned Dependencies

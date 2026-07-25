@@ -79,11 +79,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # The action composes `cargo-deny <arguments> <command> <command-arguments>`.
+      # `--config` must land in `arguments` (before the subcommand): cargo-deny
+      # 0.20 removed it from `check`, and it has been a valid global flag since
+      # 0.14.12 — so this form works on the action's pinned 0.19.2 and on newer
+      # local installs alike. `arguments` defaults to `--all-features`, which we
+      # restate here because setting it overrides the default.
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb # v2.0.17
         with:
           command: check
-          command-arguments: --config .config/deny.toml
+          arguments: --all-features --config .config/deny.toml
 
   msrv:
     name: msrv
