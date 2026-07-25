@@ -8,6 +8,12 @@ on:
       - edited
       # - synchronize (if you use required Actions)
 
+# `pull_request_target` runs against the base repo with a write-capable token,
+# so deny everything by default and let each job opt into exactly what it needs.
+# Without this, a job added later that omits its own `permissions:` block would
+# inherit the repository default rather than nothing.
+permissions: {}
+
 jobs:
   main:
     name: Validate PR title

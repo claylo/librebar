@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -77,16 +77,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The action composes `cargo-deny <arguments> <command> <command-arguments>`.
-      # `--config` must land in `arguments` (before the subcommand): cargo-deny
-      # 0.20 removed it from `check`, and it has been a valid global flag since
-      # 0.14.12 — so this form works on the action's pinned 0.19.2 and on newer
-      # local installs alike. `arguments` defaults to `--all-features`, which we
-      # restate here because setting it overrides the default.
+      #
+      # `--config` position is cargo-deny-version-specific and the two forms are
+      # mutually exclusive: <=0.19.x accepts it ONLY after the subcommand, 0.20+
+      # ONLY before it. So the action release matters — v2.1.1 is the first that
+      # bundles cargo-deny 0.20.2, matching the version `just deny` runs locally.
+      # Keep this pin and .justfile's `deny` recipe in step; if they drift apart,
+      # one of the two starts failing on the `--config` placement.
+      #
+      # `arguments` defaults to `--all-features`, restated here because setting
+      # it overrides the default.
       - name: Check dependencies
-        uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb # v2.0.17
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
           arguments: --all-features --config .config/deny.toml
@@ -97,7 +102,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Read MSRV
         id: msrv
@@ -140,7 +145,15 @@ jobs:
           cache-key-suffix: msrv
           toolchain: ${{ steps.msrv.outputs.msrv }}
 
+      # RUSTUP_TOOLCHAIN is required, not belt-and-braces. rustup's override
+      # order is: `+toolchain` arg > RUSTUP_TOOLCHAIN > directory override >
+      # rust-toolchain.toml > default toolchain. dtolnay/rust-toolchain sets the
+      # toolchain via `rustup default`, which rust-toolchain.toml outranks — so a
+      # bare `cargo check` here silently resolves to the pinned build channel and
+      # this job asserts nothing about the MSRV.
       - name: cargo check (MSRV)
         if: steps.msrv.outputs.found == 'true'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.msrv }}
         run: cargo check --all-targets --all-features
 
