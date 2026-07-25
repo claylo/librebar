@@ -19,8 +19,12 @@ fix:
 # Check dependencies for security advisories and license compliance.
 # `--all-features` walks the full dep tree so optional features (hyper-rustls,
 # opentelemetry, etc.) are covered — matches the CI invocation.
+#
+# NOTE: cargo-deny 0.20 moved graph-shaping flags (`--config`, `--all-features`,
+# `--workspace`) to global options, ahead of the subcommand. Only report-shaping
+# flags (`--deny`, `--warn`, `--allow`) remain on `check`.
 deny:
-  cargo deny --all-features check --config .config/deny.toml
+  cargo deny --all-features --config .config/deny.toml check
 
 test:
   cargo nextest run --workspace --all-features
@@ -48,20 +52,25 @@ outdated:
     cargo outdated --workspace --root-deps-only
 
 # Safe update: respects semver constraints, only touches Cargo.lock
+#
+# NOTE: no `--workspace` here. In `cargo update`, `--workspace` is shorthand
+# for `-p <each workspace member>` — it re-resolves only the workspace's own
+# packages, which is a no-op for a single-crate workspace. Bare `cargo update`
+# is what actually walks the dependency tree.
 update:
-    cargo update --workspace --verbose
+    cargo update --verbose
 
 # Upgrade Cargo.toml to latest compatible versions
 upgrade:
     cargo upgrade
-    cargo update --workspace
+    cargo update
 
 # The nuclear option: upgrade to latest incompatible versions (breaking changes)
 upgrade-breaking:
     cargo upgrade --incompatible
-    cargo update --workspace
+    cargo update
 
 # See what WOULD update without doing it
 check-updates:
-    cargo update --workspace --dry-run
+    cargo update --dry-run
 
