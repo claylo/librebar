@@ -1,3 +1,8 @@
+## [0.2.0] - 2026-07-25
+
+### 🚀 Features
+
+- *(mcp)* [**breaking**] Migrate to rmcp 2.2, update all dependencies (#22)
 ## [0.1.0] - 2026-05-26
 
 ### 🚀 Features
@@ -69,3 +74,4 @@
 - Format update module and verify Phase 3 feature isolation
 - Rename crate to librebar and port launch scaffolding (#2)
 - Update dev channel, clean up readme (#17)
+- Release 0.1.0
