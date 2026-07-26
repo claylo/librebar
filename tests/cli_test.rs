@@ -56,6 +56,77 @@ fn common_args_chdir() {
     );
 }
 
+// ─── CommonArgs::apply ──────────────────────────────────────────────
+//
+// These deliberately avoid exercising a *successful* `--chdir`: that mutates
+// process-global state and would race the rest of the suite. The failure path
+// leaves the cwd untouched, so it is safe to run in parallel.
+
+#[test]
+fn apply_continues_when_no_terminal_flag_is_set() {
+    let cli = TestCli::parse_from(["test-app", "info"]);
+    let startup = cli.common.apply("1.2.3").expect("apply should succeed");
+
+    assert_eq!(startup, librebar::cli::Startup::Continue);
+    assert!(startup.is_continue());
+    assert!(!startup.is_exit());
+}
+
+#[test]
+fn apply_exits_on_version_only() {
+    let cli = TestCli::parse_from(["test-app", "--version-only"]);
+    let startup = cli.common.apply("1.2.3").expect("apply should succeed");
+
+    assert_eq!(startup, librebar::cli::Startup::Exit);
+    assert!(startup.is_exit());
+}
+
+#[test]
+fn apply_reports_a_bad_chdir() {
+    let cli = TestCli::parse_from([
+        "test-app",
+        "-C",
+        "/librebar-nonexistent-directory-for-tests",
+        "info",
+    ]);
+
+    let err = cli
+        .common
+        .apply("1.2.3")
+        .expect_err("a nonexistent --chdir target should error");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    // The bare OS message names neither the flag nor the path, which leaves
+    // the user nothing to act on.
+    let msg = err.to_string();
+    assert!(
+        msg.contains("--chdir"),
+        "message should name the flag: {msg}"
+    );
+    assert!(
+        msg.contains("/librebar-nonexistent-directory-for-tests"),
+        "message should name the path: {msg}"
+    );
+}
+
+#[test]
+fn version_only_is_answered_before_chdir() {
+    // `--version-only` is a scripting query and must not fail because of an
+    // unrelated bad `-C`. This pins the ordering inside `apply`.
+    let cli = TestCli::parse_from([
+        "test-app",
+        "--version-only",
+        "-C",
+        "/librebar-nonexistent-directory-for-tests",
+    ]);
+
+    let startup = cli
+        .common
+        .apply("1.2.3")
+        .expect("--version-only should not touch the filesystem");
+    assert_eq!(startup, librebar::cli::Startup::Exit);
+}
+
 #[test]
 fn color_choice_default_is_auto() {
     let cli = TestCli::parse_from(["test-app", "info"]);

@@ -64,16 +64,16 @@
 //!
 //! ```toml
 //! # Minimal CLI tool
-//! librebar = { version = "0.1", features = ["cli", "config", "logging"] }
+//! librebar = { version = "0.2", features = ["cli", "config", "logging"] }
 //!
 //! # CLI tool with update checks
-//! librebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "update"] }
+//! librebar = { version = "0.2", features = ["cli", "config", "logging", "shutdown", "update"] }
 //!
 //! # Long-running service with observability
-//! librebar = { version = "0.1", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
+//! librebar = { version = "0.2", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
 //!
 //! # Plugin-extensible CLI (git-style subcommands)
-//! librebar = { version = "0.1", features = ["cli", "config", "logging", "dispatch"] }
+//! librebar = { version = "0.2", features = ["cli", "config", "logging", "dispatch"] }
 //! ```
 //!
 //! # Builder usage
@@ -185,6 +185,16 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 pub use error::{Error, Result};
+
+/// Re-export of [`camino`].
+///
+/// `Utf8Path` and `Utf8PathBuf` appear in librebar's own public API — see
+/// [`Builder::config_from_file`] — and are the natural path type for a
+/// consumer's config struct. Reaching them through this re-export guarantees
+/// they are the same types librebar was compiled against, rather than a
+/// second copy from an independently resolved `camino` dependency.
+#[cfg(feature = "config")]
+pub use camino;
 
 // ─── App ────────────────────────────────────────────────────────────
 

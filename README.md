@@ -31,9 +31,15 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    cli.common.apply_color();
+
+    // Applies color, answers --version-only, honors -C. Returns Exit when a
+    // flag was a complete request in itself.
+    if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
+        return Ok(());
+    }
 
     let app = librebar::init(env!("CARGO_PKG_NAME"))
+        .with_version(env!("CARGO_PKG_VERSION"))
         .with_cli(cli.common)
         .config::<Config>()
         .logging()
@@ -55,7 +61,7 @@ Add librebar to your `Cargo.toml` with the features you need:
 
 ```toml
 [dependencies]
-librebar = { version = "0.1", features = ["cli", "config", "logging"] }
+librebar = { version = "0.2", features = ["cli", "config", "logging"] }
 ```
 
 No default features. You opt into exactly what you need.
@@ -131,6 +137,32 @@ This gives every librebar-based app a consistent set of flags:
 | `--chdir` | `-C` | Run as if started in a different directory |
 | `--version-only` | | Print version number and exit |
 
+All of them except `--version-only` are `global`, so they are accepted on any
+subcommand. `--version-only` is deliberately root-only.
+
+Parsing a flag is not the same as acting on it. Call `apply` once after
+parsing and the whole set is live:
+
+```rust
+if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
+    return Ok(());
+}
+```
+
+`apply` sets the color override, prints the version and returns
+`Startup::Exit` if `--version-only` was passed, and changes directory for
+`-C` — in that order, so `--version-only` never fails because of an unrelated
+bad `-C`, and the directory change lands before config discovery walks up from
+the cwd. `Startup` is `#[must_use]`, so ignoring the result is a warning
+rather than a silent bug.
+
+The version string has to come from you: `env!("CARGO_PKG_VERSION")` expanded
+inside librebar would yield librebar's version, not yours. Pass the same value
+to `.with_version()` so crash dumps and OTEL resource attributes agree.
+
+`apply_color()` and `apply_chdir()` remain available for apps that need a
+different order or want to handle `--version-only` themselves.
+
 For compact help (`-h` shows short help, `--help` shows long help):
 
 ```rust
@@ -145,16 +177,22 @@ let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 Define your config struct with serde:
 
 ```rust
+use librebar::camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct Config {
     log_level: librebar::config::LogLevel,
-    log_dir: Option<camino::Utf8PathBuf>,
+    log_dir: Option<Utf8PathBuf>,
     database_url: Option<String>,
 }
 ```
+
+`camino` is re-exported by the `config` feature. Use `librebar::camino` rather
+than adding your own dependency: `Utf8Path` shows up in librebar's public API,
+and going through the re-export guarantees you get the same types librebar was
+compiled against instead of a second, independently resolved copy.
 
 ### Discovery
 
