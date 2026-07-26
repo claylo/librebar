@@ -1,8 +1,22 @@
+## [0.3.0] - 2026-07-26
+
+### 🚀 Features
+
+- *(cli)* Add CommonArgs::apply and re-export camino (#24)
+
+### 📚 Documentation
+
+- Add latest handoff
 ## [0.2.0] - 2026-07-25
 
 ### 🚀 Features
 
 - *(mcp)* [**breaking**] Migrate to rmcp 2.2, update all dependencies (#22)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release 0.2.0
+- Fix cargo-deny invocation, bump all action pins (#23)
 ## [0.1.0] - 2026-05-26
 
 ### 🚀 Features
