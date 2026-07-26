@@ -7,6 +7,36 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tempfile::TempDir;
 
+// ─── camino re-export ───────────────────────────────────────────────
+
+/// A consumer config reaching `Utf8PathBuf` through librebar rather than
+/// through its own `camino` dependency. `Utf8Path` appears in librebar's
+/// public API, so the re-export is what guarantees both sides mean the same
+/// type instead of two independently resolved copies.
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+struct PathConfig {
+    log_dir: Option<librebar::camino::Utf8PathBuf>,
+}
+
+#[test]
+fn camino_reexport_is_usable_in_a_consumer_config() {
+    let parsed: PathConfig = serde_json::from_value(json!({"log_dir": "/var/log/app"})).unwrap();
+
+    assert_eq!(
+        parsed.log_dir.as_deref(),
+        Some(librebar::camino::Utf8Path::new("/var/log/app"))
+    );
+}
+
+#[test]
+fn camino_reexport_is_the_type_librebar_compiled_against() {
+    // `config_from_file` takes `&camino::Utf8Path`. Handing it a path built
+    // from the re-export is what stops compiling if the two ever diverge.
+    let path = librebar::camino::Utf8Path::new("/nonexistent/librebar-test.toml");
+    let _builder = librebar::init("test-app").config_from_file::<PathConfig>(path);
+}
+
 // ─── deep_merge tests ───────────────────────────────────────────────
 
 #[test]

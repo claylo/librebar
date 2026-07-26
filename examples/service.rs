@@ -112,8 +112,11 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    cli.common.apply_color();
-    cli.common.apply_chdir()?;
+    // One call: color override, --version-only, and -C. `Startup` is
+    // #[must_use], so the early return cannot be forgotten silently.
+    if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
+        return Ok(());
+    }
 
     // Hardcoded: env!("CARGO_PKG_NAME") in a cargo example resolves to the
     // hosting crate (librebar), not the example. Hardcoding keeps config

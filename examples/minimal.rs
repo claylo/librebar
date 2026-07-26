@@ -69,8 +69,11 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    cli.common.apply_color();
-    cli.common.apply_chdir()?;
+    // One call: color override, --version-only, and -C. `Startup` is
+    // #[must_use], so the early return cannot be forgotten silently.
+    if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
+        return Ok(());
+    }
 
     // A real app would pass `env!("CARGO_PKG_NAME")`. In a cargo example,
     // that resolves to the hosting crate's name (librebar), not "minimal",
