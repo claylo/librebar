@@ -137,8 +137,14 @@ This gives every librebar-based app a consistent set of flags:
 | `--chdir` | `-C` | Run as if started in a different directory |
 | `--version-only` | | Print version number and exit |
 
-All of them except `--version-only` are `global`, so they are accepted on any
-subcommand. `--version-only` is deliberately root-only.
+All of them are `global`, so they are accepted on any subcommand as well as at
+the root. `myapp sub --version-only` prints the version and exits without
+running `sub`.
+
+That reserves `-q`, `-v` and `-C` across your whole command tree. Redeclaring
+one in a subcommand is a clap conflict, and clap reports it as a panic on first
+run rather than a compile error — so design your subcommand flags around these
+three.
 
 Parsing a flag is not the same as acting on it. Call `apply` once after
 parsing and the whole set is live:

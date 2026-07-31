@@ -62,8 +62,9 @@ impl ColorChoice {
 /// which surfaces as a panic on first run rather than a compile error — design
 /// your subcommand flags around these three.
 ///
-/// `--version-only` is deliberately *not* global: it is a top-level query, so
-/// `myapp --version-only` works and `myapp sub --version-only` does not.
+/// Every flag here is global, so all of them are accepted after a subcommand
+/// name as well as before it. `myapp sub --version-only` prints the version and
+/// exits without running `sub`, the same way `-C` applies wherever it appears.
 ///
 /// The rustdoc above is for readers of this crate, not for users of yours.
 /// `#[command(about = None, long_about = None)]` keeps clap from adopting it:
@@ -73,7 +74,7 @@ impl ColorChoice {
 #[command(about = None, long_about = None)]
 pub struct CommonArgs {
     /// Print only the version number (for scripting).
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub version_only: bool,
 
     /// Run as if started in DIR.

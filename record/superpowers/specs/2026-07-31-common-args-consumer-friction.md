@@ -1,6 +1,6 @@
 # CommonArgs: consumer friction ledger
 
-**Status:** partially implemented (items 1–5 shipped, 6–8 open)
+**Status:** partially implemented (items 1–7 shipped, 8 open)
 **Date:** 2026-07-31
 
 Every defect below was found the same way: a real consumer wired `CommonArgs`
@@ -112,38 +112,51 @@ unfixed code.
 
 ---
 
-## Open
-
-### 6. `version_only` is the only non-global flag
+### 6. `version_only` was the only non-global flag
 
 ```rust
-#[arg(long)]                      pub version_only: bool,   // not global
+#[arg(long)]                             pub version_only: bool,   // not global
 #[arg(short = 'C', long, global = true)] pub chdir: ...
 #[arg(short, long, global = true)]       pub quiet: bool,
-// ...every other field is global
+// ...every other field was global
 ```
 
-So `app --version-only` works but `app sub --version-only` errors, while every
-other common flag propagates to subcommands. Inconsistent, and the inconsistency
-is invisible until a user tries it.
+So `app --version-only` worked but `app sub --version-only` errored, while every
+other common flag propagated. Inconsistent, and invisible until a user tried it.
 
-**Decision needed.** Making it `global = true` is a one-word change and matches
-every sibling, but it changes parse behavior for existing consumers — a command
-line that used to error would start succeeding. Defensible as a patch under the
-README's "adding new public items" policy; not obviously so. Not taken
-unilaterally.
+The behavior change is real — a command line that used to error now succeeds —
+so this was Clay's call rather than a unilateral fix. Approved 2026-07-31.
+
+**Fixed:** `global = true`. `myapp sub --version-only` now prints the version and
+exits without running `sub`, matching how `-C` and `--color` already behaved.
+
+Pinned by `every_common_flag_propagates_to_subcommands`, which passes the whole
+flag set *after* the subcommand name and asserts each one arrives. Written as
+one test over all six rather than one per flag, so a future field added without
+`global` fails here instead of silently repeating the same inconsistency.
+
+README lines 140–141 asserted the old behavior in prose ("`--version-only` is
+deliberately root-only") and were rewritten in the same commit.
 
 ### 7. Global flags silently claim short letters from consumers
 
 `CommonArgs` claims `-C`, `-q`, `-v` as `global = true`. A consumer that
-declares `-v` on a subcommand gets a clap conflict panic at runtime. `bblm` hit
-exactly this: its spec listed `-v` under `gen`, and the redeclaration was a
-conflict.
+declares `-v` on a subcommand gets a clap conflict, and clap reports it as a
+panic on first run rather than a compile error. `bblm` hit exactly this: its
+spec listed `-v` under `gen`, and the redeclaration was a conflict.
 
-This is inherent to global args and arguably correct — but it's undocumented.
-The reserved short letters should be listed in the `CommonArgs` rustdoc and the
-README's CLI table so consumers design around them instead of discovering the
-conflict at first run.
+The behavior is inherent to global args and correct as designed. The defect was
+that nothing said so — a consumer had no way to learn the reservation except by
+colliding with it.
+
+**Fixed:** documentation only, no code change. A "Reserved short flags" section
+in the `CommonArgs` rustdoc, and a matching paragraph under the README's CLI
+table. Both name the runtime-panic failure mode explicitly, since that is what
+makes the collision expensive to diagnose.
+
+---
+
+## Open
 
 ### 8. `CommonArgs` derives `Parser`, not `Args`
 

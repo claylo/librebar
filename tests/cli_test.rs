@@ -56,6 +56,38 @@ fn common_args_chdir() {
     );
 }
 
+#[test]
+fn every_common_flag_propagates_to_subcommands() {
+    // All of CommonArgs is `global`. A flag that works at the top level but
+    // errors after a subcommand name is the kind of inconsistency a user only
+    // discovers by tripping over it.
+    let cli = TestCli::parse_from([
+        "test-app",
+        "info",
+        "--version-only",
+        "--quiet",
+        "-vv",
+        "--json",
+        "--color",
+        "never",
+        "-C",
+        "/tmp",
+    ]);
+
+    assert!(cli.common.version_only);
+    assert!(cli.common.quiet);
+    assert_eq!(cli.common.verbose, 2);
+    assert!(cli.common.json);
+    assert!(matches!(
+        cli.common.color,
+        librebar::cli::ColorChoice::Never
+    ));
+    assert_eq!(
+        cli.common.chdir.as_deref(),
+        Some(std::path::Path::new("/tmp"))
+    );
+}
+
 // ─── CommonArgs::apply ──────────────────────────────────────────────
 //
 // These deliberately avoid exercising a *successful* `--chdir`: that mutates
