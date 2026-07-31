@@ -141,3 +141,71 @@ fn color_choice_never() {
         librebar::cli::ColorChoice::Never
     ));
 }
+
+// NOTE: these harnesses deliberately use `//` rather than `///`. A doc comment
+// here would itself become the command's about/long_about and mask the very
+// leak these tests pin.
+
+// A consumer that describes itself with `about` but never sets `long_about` —
+// the overwhelmingly common shape, and the one where a leak hides in `--help`
+// while `-h` looks fine.
+#[derive(Parser, Debug)]
+#[command(name = "about-app", about = "Do the thing")]
+struct AboutCli {
+    #[command(flatten)]
+    #[allow(dead_code)]
+    pub common: librebar::cli::CommonArgs,
+}
+
+// A consumer that describes itself not at all.
+#[derive(Parser, Debug)]
+#[command(name = "bare-app")]
+struct BareCli {
+    #[command(flatten)]
+    #[allow(dead_code)]
+    pub common: librebar::cli::CommonArgs,
+}
+
+#[test]
+fn flattening_common_args_does_not_describe_the_consumer() {
+    use clap::CommandFactory;
+
+    // `Args::augment_args` applies a flattened struct's doc comment as the
+    // parent command's `about`/`long_about`. `CommonArgs` has rustdoc aimed at
+    // library readers, so without suppression every consumer's help text
+    // describes librebar instead of the consumer.
+    let cmd = BareCli::command();
+    assert_eq!(
+        cmd.get_about(),
+        None,
+        "flattening CommonArgs must not supply the consumer's short description"
+    );
+    assert_eq!(
+        cmd.get_long_about(),
+        None,
+        "flattening CommonArgs must not supply the consumer's long description"
+    );
+}
+
+#[test]
+fn a_consumer_that_sets_about_keeps_it_in_long_help() {
+    use clap::CommandFactory;
+
+    // The regression: `-h` rendered the consumer's `about` because the derive
+    // applies the parent's own attributes last, but `--help` fell through to
+    // `long_about`, which only the flattened struct had set.
+    let rendered = AboutCli::command().render_long_help().to_string();
+
+    assert!(
+        rendered.contains("Do the thing"),
+        "--help should describe the consumer: {rendered}"
+    );
+    assert!(
+        !rendered.contains("librebar-based applications"),
+        "--help must not leak librebar's rustdoc: {rendered}"
+    );
+    assert!(
+        !rendered.contains("command(flatten)"),
+        "--help must not leak the rustdoc example: {rendered}"
+    );
+}

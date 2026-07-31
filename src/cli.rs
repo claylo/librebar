@@ -54,7 +54,23 @@ impl ColorChoice {
 /// #[derive(Subcommand)]
 /// enum MyCommands { Run }
 /// ```
+///
+/// # Reserved short flags
+///
+/// `-C`, `-q` and `-v` are declared `global = true`, so they propagate to every
+/// subcommand and are unavailable to yours. Redeclaring one is a clap conflict,
+/// which surfaces as a panic on first run rather than a compile error — design
+/// your subcommand flags around these three.
+///
+/// `--version-only` is deliberately *not* global: it is a top-level query, so
+/// `myapp --version-only` works and `myapp sub --version-only` does not.
+///
+/// The rustdoc above is for readers of this crate, not for users of yours.
+/// `#[command(about = None, long_about = None)]` keeps clap from adopting it:
+/// a flattened struct's doc comment otherwise becomes the *consuming* binary's
+/// help description, so `myapp --help` would open by explaining librebar.
 #[derive(Parser, Debug)]
+#[command(about = None, long_about = None)]
 pub struct CommonArgs {
     /// Print only the version number (for scripting).
     #[arg(long)]
