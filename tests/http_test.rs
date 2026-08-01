@@ -202,6 +202,51 @@ async fn response_preserves_version_repeated_headers_and_trailers() {
     server.join().unwrap();
 }
 
+#[tokio::test]
+async fn response_debug_omits_header_trailer_and_body_values() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        b"HTTP/1.1 200 OK\r\n\
+          Transfer-Encoding: chunked\r\n\
+          Set-Cookie: session=cookie-secret\r\n\
+          X-Debug: header-secret\r\n\
+          Trailer: X-Checksum\r\n\
+          Connection: close\r\n\r\n\
+          b\r\nbody-secret\r\n\
+          0\r\nX-Checksum: trailer-secret\r\n\r\n"
+            .to_vec()
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let response = client
+        .get(&format!("http://{address}/debug"))
+        .await
+        .unwrap();
+    let response_debug = format!("{response:?}");
+
+    assert!(response_debug.contains("body_len: 11"));
+    assert!(response_debug.contains("set-cookie"));
+    assert!(response_debug.contains("x-debug"));
+    assert!(response_debug.contains("x-checksum"));
+    assert!(!response_debug.contains("cookie-secret"));
+    assert!(!response_debug.contains("header-secret"));
+    assert!(!response_debug.contains("trailer-secret"));
+    assert!(!response_debug.contains(&format!("{:?}", b"body-secret")));
+
+    let (metadata, _) = response.into_parts();
+    for debug in [
+        format!("{metadata:?}"),
+        format!("{:?}", ConditionalResponse::NotModified(metadata.clone())),
+        format!("{:?}", ModificationCheck::Modified(metadata)),
+    ] {
+        assert!(!debug.contains("cookie-secret"));
+        assert!(!debug.contains("header-secret"));
+        assert!(!debug.contains("trailer-secret"));
+    }
+
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
 #[test]
 fn validator_keeps_both_server_values() {
     let mut headers = HeaderMap::new();

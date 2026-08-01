@@ -1,15 +1,37 @@
+use std::fmt;
+
 use hyper::header::{AsHeaderName, HeaderMap, HeaderValue};
 use hyper::{StatusCode, Version};
 
 use crate::error::HttpError;
 
 /// Metadata collected from an HTTP response.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ResponseMetadata {
     pub(super) status: StatusCode,
     pub(super) version: Version,
     pub(super) headers: HeaderMap,
     pub(super) trailers: Option<HeaderMap>,
+}
+
+struct HeaderNames<'a>(&'a HeaderMap);
+
+impl fmt::Debug for HeaderNames<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.0.keys()).finish()
+    }
+}
+
+impl fmt::Debug for ResponseMetadata {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResponseMetadata")
+            .field("status", &self.status)
+            .field("version", &self.version)
+            .field("header_names", &HeaderNames(&self.headers))
+            .field("trailer_names", &self.trailers.as_ref().map(HeaderNames))
+            .finish()
+    }
 }
 
 impl ResponseMetadata {
@@ -54,12 +76,23 @@ impl ResponseMetadata {
 }
 
 /// HTTP response returned by [`super::HttpClient`].
-#[derive(Debug)]
 pub struct Response {
     pub(super) metadata: ResponseMetadata,
     pub(super) body: Vec<u8>,
     #[cfg(feature = "http-cache")]
     pub(super) cache_status: Option<CacheStatus>,
+}
+
+impl fmt::Debug for Response {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut response = formatter.debug_struct("Response");
+        response
+            .field("metadata", &self.metadata)
+            .field("body_len", &self.body.len());
+        #[cfg(feature = "http-cache")]
+        response.field("cache_status", &self.cache_status);
+        response.finish()
+    }
 }
 
 impl Response {
