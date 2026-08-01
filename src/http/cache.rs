@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use base64::Engine as _;
 use http_cache_semantics::{AfterResponse, BeforeRequest, CacheOptions, CachePolicy};
@@ -369,7 +369,7 @@ pub(super) async fn get_cached(
     let policy_request = policy_request(&wire_request)?;
     let now = SystemTime::now();
 
-    let Some(entry) = load_entry(cache, key)? else {
+    let Some(entry) = load_entry(cache, key).await? else {
         return fetch_and_maybe_store(client, cache, key, wire_request).await;
     };
 
@@ -379,7 +379,7 @@ pub(super) async fn get_cached(
                 Ok(response) => Ok(response),
                 Err(error) => {
                     tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
-                    let _ = cache.remove(&namespaced_key(key));
+                    let _ = remove_entry(cache, key).await;
                     fetch_and_maybe_store(client, cache, key, wire_request).await
                 }
             }
@@ -397,7 +397,7 @@ pub(super) async fn get_cached(
             .await
         }
         BeforeRequest::Stale { .. } => {
-            let _ = cache.remove(&namespaced_key(key));
+            let _ = remove_entry(cache, key).await;
             fetch_and_maybe_store(client, cache, key, wire_request).await
         }
     }
@@ -415,7 +415,13 @@ fn policy_request(wire: &Request<Bytes>) -> Result<Request<()>> {
     Ok(request)
 }
 
-fn load_entry(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
+async fn load_entry(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
+    let cache = Cache::new(cache.dir());
+    let key = key.to_owned();
+    crate::cache::run_io(move || load_entry_blocking(&cache, &key)).await
+}
+
+fn load_entry_blocking(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
     let namespaced = namespaced_key(key);
     let bytes = match cache.get(&namespaced) {
         Ok(bytes) => bytes,
@@ -440,6 +446,12 @@ fn load_entry(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
     }
 }
 
+async fn remove_entry(cache: &Cache, key: &str) -> Result<()> {
+    let cache = Cache::new(cache.dir());
+    let namespaced = namespaced_key(key);
+    crate::cache::run_io(move || cache.remove(&namespaced)).await
+}
+
 async fn fetch_and_maybe_store(
     client: &HttpClient,
     cache: &Cache,
@@ -458,8 +470,8 @@ async fn fetch_and_maybe_store(
     );
 
     if policy.is_storable() {
-        persist_entry(client, cache, key, &policy, &response, response_time);
-    } else if let Err(error) = cache.remove(&namespaced_key(key)) {
+        persist_entry(client, cache, key, &policy, &response, response_time).await;
+    } else if let Err(error) = remove_entry(cache, key).await {
         tracing::warn!(key, error = %error, "failed to remove non-storable HTTP cache entry");
     }
     Ok(response.with_cache_status(CacheStatus::Miss))
@@ -503,14 +515,21 @@ async fn revalidate(
                 response_time,
                 private_cache_options(),
             );
-            let cached =
-                persist_cached_response(client, cache, key, &policy, cached, response_time);
+            let cached = persist_cached_response(
+                cache,
+                key,
+                &policy,
+                cached,
+                response_time,
+                client.config().http_cache_stale_retention,
+            )
+            .await?;
             fresh_response(cached, &calculated_parts.headers, CacheStatus::Revalidated)
                 .map_err(corrupt_cache_error)
         }
         AfterResponse::Modified(_, _) => {
             if response.status() == StatusCode::NOT_MODIFIED {
-                let _ = cache.remove(&namespaced_key(key));
+                let _ = remove_entry(cache, key).await;
                 return Ok(response.with_cache_status(CacheStatus::Miss));
             }
             let policy = CachePolicy::new_options(
@@ -520,8 +539,8 @@ async fn revalidate(
                 private_cache_options(),
             );
             if policy.is_storable() {
-                persist_entry(client, cache, key, &policy, &response, response_time);
-            } else if let Err(error) = cache.remove(&namespaced_key(key)) {
+                persist_entry(client, cache, key, &policy, &response, response_time).await;
+            } else if let Err(error) = remove_entry(cache, key).await {
                 tracing::warn!(key, error = %error, "failed to remove non-storable HTTP cache entry");
             }
             Ok(response.with_cache_status(CacheStatus::Miss))
@@ -559,7 +578,7 @@ fn private_cache_options() -> CacheOptions {
     }
 }
 
-fn persist_entry(
+async fn persist_entry(
     client: &HttpClient,
     cache: &Cache,
     key: &str,
@@ -569,19 +588,54 @@ fn persist_entry(
 ) {
     match CachedResponse::try_from(response) {
         Ok(cached) => {
-            let _ = persist_cached_response(client, cache, key, policy, cached, now);
+            if let Err(error) = persist_cached_response(
+                cache,
+                key,
+                policy,
+                cached,
+                now,
+                client.config().http_cache_stale_retention,
+            )
+            .await
+            {
+                tracing::warn!(key, error = %error, "failed to persist HTTP cache entry");
+            }
         }
         Err(error) => tracing::warn!(key, error = %error, "failed to encode HTTP cache response"),
     }
 }
 
-fn persist_cached_response(
-    client: &HttpClient,
+async fn persist_cached_response(
     cache: &Cache,
     key: &str,
     policy: &CachePolicy,
     response: CachedResponse,
     now: SystemTime,
+    stale_retention: Duration,
+) -> Result<CachedResponse> {
+    let cache = Cache::new(cache.dir());
+    let key = key.to_owned();
+    let policy = policy.clone();
+    crate::cache::run_io(move || {
+        Ok(persist_cached_response_blocking(
+            &cache,
+            &key,
+            &policy,
+            response,
+            now,
+            stale_retention,
+        ))
+    })
+    .await
+}
+
+fn persist_cached_response_blocking(
+    cache: &Cache,
+    key: &str,
+    policy: &CachePolicy,
+    response: CachedResponse,
+    now: SystemTime,
+    stale_retention: Duration,
 ) -> CachedResponse {
     let entry = CachedHttpEntry {
         format_version: HTTP_CACHE_FORMAT_VERSION,
@@ -596,9 +650,7 @@ fn persist_cached_response(
         }
     };
     let metadata_len = (metadata.len() as u64).to_be_bytes();
-    let ttl = policy
-        .time_to_live(now)
-        .saturating_add(client.config().http_cache_stale_retention);
+    let ttl = policy.time_to_live(now).saturating_add(stale_retention);
     let parts: [&[u8]; 4] = [
         entry.response.body.as_slice(),
         metadata.as_slice(),

@@ -166,6 +166,17 @@ impl Cache {
     }
 }
 
+#[cfg(any(feature = "http-cache", feature = "update"))]
+pub(crate) async fn run_io<T, F>(operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| CacheError::Io(std::io::Error::other(error)))?
+}
+
 fn read_entry(path: &Path) -> std::result::Result<(u64, Vec<u8>), CacheError> {
     let mut file = std::fs::File::open(path)?;
     let mut header = [0_u8; CACHE_HEADER_LEN];
@@ -205,7 +216,6 @@ fn write_entry(path: &Path, header: &[u8], parts: &[&[u8]]) -> std::io::Result<(
     for part in parts {
         file.write_all(part)?;
     }
-    file.sync_all()?;
     file.commit()
 }
 
@@ -216,4 +226,45 @@ fn write_entry(path: &Path, header: &[u8], parts: &[&[u8]]) -> std::io::Result<(
 pub fn default_cache_dir(app_name: &str) -> Option<PathBuf> {
     let proj_dirs = directories::ProjectDirs::from("", "", app_name)?;
     Some(proj_dirs.cache_dir().join("librebar"))
+}
+
+#[cfg(all(test, any(feature = "http-cache", feature = "update")))]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn blocking_io_does_not_stall_current_thread_runtime() {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let (timer_tx, timer_rx) = mpsc::sync_channel(1);
+
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let blocking = super::run_io(move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                });
+                let timer = async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    timer_tx.send(()).unwrap();
+                };
+
+                let (result, ()) = tokio::join!(blocking, timer);
+                result.unwrap();
+            });
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let timer_ran = timer_rx.recv_timeout(Duration::from_millis(250)).is_ok();
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+
+        assert!(timer_ran, "cache I/O stalled the current-thread runtime");
+    }
 }

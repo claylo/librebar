@@ -85,8 +85,9 @@ impl UpdateChecker {
     /// Check for updates. Returns `Some(UpdateInfo)` if a newer version
     /// is available, `None` otherwise.
     ///
-    /// This is non-blocking and best-effort. Network errors, GitHub rate
-    /// limits, and parse failures are logged at debug level and return `None`.
+    /// This does not block the async runtime and is best-effort. Network
+    /// errors, GitHub rate limits, and parse failures are logged at debug
+    /// level and return `None`.
     #[tracing::instrument(skip(self), fields(app = %self.app_name, current = %self.current_version))]
     pub async fn check(&self) -> Option<UpdateInfo> {
         if self.is_suppressed() {
@@ -96,7 +97,7 @@ impl UpdateChecker {
 
         // Check cache first
         if let Some(cache) = crate::cache::Cache::default_for(&self.app_name)
-            && let Ok(Some(cached)) = cache.get(CACHE_KEY)
+            && let Ok(Some(cached)) = crate::cache::run_io(move || cache.get(CACHE_KEY)).await
             && let Ok(version) = String::from_utf8(cached)
         {
             tracing::debug!(cached_version = %version, "using cached version check");
@@ -134,7 +135,8 @@ impl UpdateChecker {
 
         // Cache the result (best-effort: stale cache just means another API call)
         if let Some(cache) = crate::cache::Cache::default_for(&self.app_name) {
-            let _ = cache.set(CACHE_KEY, latest.as_bytes(), CACHE_TTL);
+            let latest = latest.as_bytes().to_vec();
+            let _ = crate::cache::run_io(move || cache.set(CACHE_KEY, &latest, CACHE_TTL)).await;
         }
 
         self.compare_versions_with_url(latest, html_url)
