@@ -33,6 +33,7 @@ fn clear_otel_env() -> MutexGuard<'static, ()> {
     unsafe {
         std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
         std::env::remove_var("OTEL_EXPORTER_OTLP_PROTOCOL");
+        std::env::remove_var("MY_TOOL_ENV");
     }
     guard
 }
@@ -149,12 +150,20 @@ fn otel_config_from_app_name() {
 }
 
 #[test]
-fn otel_config_env_var_names() {
+fn otel_config_exposes_standard_env_var_names_as_constants() {
+    assert_eq!(OtelConfig::ENV_VAR_ENDPOINT, "OTEL_EXPORTER_OTLP_ENDPOINT");
+    assert_eq!(OtelConfig::ENV_VAR_PROTOCOL, "OTEL_EXPORTER_OTLP_PROTOCOL");
+}
+
+#[test]
+fn otel_config_reads_the_app_specific_environment() {
     let _guard = clear_otel_env();
+    // SAFETY: ENV_LOCK serializes env-touching tests in this file.
+    unsafe { std::env::set_var("MY_TOOL_ENV", "production") };
+
     let cfg = OtelConfig::from_app_name("my-tool", "1.0.0");
-    assert_eq!(cfg.env_var_endpoint, "OTEL_EXPORTER_OTLP_ENDPOINT");
-    assert_eq!(cfg.env_var_protocol, "OTEL_EXPORTER_OTLP_PROTOCOL");
-    assert_eq!(cfg.env_var_env, "MY_TOOL_ENV");
+
+    assert_eq!(cfg.env, "production");
 }
 
 #[test]

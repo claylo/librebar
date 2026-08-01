@@ -45,15 +45,15 @@ pub struct OtelConfig {
     pub env: String,
     /// OTLP collector endpoint. `None` means export is disabled.
     pub endpoint: Option<String>,
-    /// Env var name for the OTLP endpoint.
-    pub env_var_endpoint: String,
-    /// Env var name for the OTLP protocol.
-    pub env_var_protocol: String,
-    /// Env var name for the deployment environment (e.g., `MY_TOOL_ENV`).
-    pub env_var_env: String,
 }
 
 impl OtelConfig {
+    /// Standard environment variable for the OTLP collector endpoint.
+    pub const ENV_VAR_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
+
+    /// Standard environment variable for the OTLP transport protocol.
+    pub const ENV_VAR_PROTOCOL: &str = "OTEL_EXPORTER_OTLP_PROTOCOL";
+
     /// Create an OTEL config from an application name and version.
     ///
     /// Reads `OTEL_EXPORTER_OTLP_ENDPOINT` for the collector URL and
@@ -62,7 +62,7 @@ impl OtelConfig {
         let prefix = app_name.to_uppercase().replace('-', "_");
         let env_var_env = format!("{prefix}_ENV");
 
-        let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        let endpoint = std::env::var(Self::ENV_VAR_ENDPOINT)
             .ok()
             .filter(|v| !v.is_empty());
 
@@ -76,9 +76,6 @@ impl OtelConfig {
             version: version.to_string(),
             env,
             endpoint,
-            env_var_endpoint: "OTEL_EXPORTER_OTLP_ENDPOINT".to_string(),
-            env_var_protocol: "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
-            env_var_env,
         }
     }
 
@@ -140,7 +137,7 @@ pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<
         ])
         .build();
 
-    let protocol = std::env::var("OTEL_EXPORTER_OTLP_PROTOCOL")
+    let protocol = std::env::var(OtelConfig::ENV_VAR_PROTOCOL)
         .ok()
         .unwrap_or_default();
 
@@ -181,7 +178,7 @@ fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::
         #[cfg(not(feature = "otel-http-json"))]
         "http/json" => Err(crate::Error::OtelInit(
             opentelemetry_otlp::ExporterBuildError::InvalidConfig {
-                name: "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
+                name: OtelConfig::ENV_VAR_PROTOCOL.to_string(),
                 reason: "http/json requires librebar feature 'otel-http-json'".to_string(),
             },
         )),
