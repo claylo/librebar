@@ -936,6 +936,16 @@ mod tests {
             ["one", "two"]
         );
     }
+
+    #[tokio::test]
+    async fn retry_wait_saturates_an_exhausted_budget() {
+        let mut remaining = 0;
+        let mut next_delay = Duration::ZERO;
+
+        wait_to_retry(&mut remaining, &mut next_delay).await;
+
+        assert_eq!(remaining, 0);
+    }
 }
 
 #[derive(Debug)]
@@ -993,8 +1003,12 @@ async fn discard_body(mut body: ResponseBody) {
     }
 }
 
+/// Wait before a retry after consuming one budget slot.
+///
+/// Callers should invoke this only when a retry remains; saturation keeps an
+/// accidental zero-budget call from underflowing.
 async fn wait_to_retry(remaining: &mut usize, next_delay: &mut Duration) {
-    *remaining -= 1;
+    *remaining = remaining.saturating_sub(1);
     let delay = *next_delay;
     *next_delay = next_delay.saturating_mul(2).min(Duration::from_secs(1));
     tracing::debug!(?delay, remaining = *remaining, "retrying HTTP request");
