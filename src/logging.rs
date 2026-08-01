@@ -306,14 +306,12 @@ fn log_target_from_path(path: PathBuf) -> std::result::Result<LogTarget, String>
     })
 }
 
-/// Verify a directory is writable by creating it (if needed) and opening a file for append.
+/// Verify a directory is writable by opening the current daily log file for append.
 fn ensure_writable(dir: &Path, file_name: &str) -> std::result::Result<(), String> {
     std::fs::create_dir_all(dir)
         .map_err(|e| format!("Failed to create log directory {}: {e}", dir.display()))?;
 
-    let path = dir.join(file_name);
-    open_private_append_file(&path)
-        .map_err(|e| format!("Failed to open log file {}: {e}", path.display()))?;
+    open_daily_log_file(dir, file_name, &current_log_date())?;
 
     Ok(())
 }

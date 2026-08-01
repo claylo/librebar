@@ -51,6 +51,22 @@ fn log_target_from_dir_appends_service() {
 }
 
 #[test]
+fn log_target_probe_uses_daily_appender_name() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let service = "librebar-probe-test";
+    let date = &logging::format_timestamp()[..10];
+
+    logging::resolve_log_target_with(service, None, Some(temp.path().into()), None).unwrap();
+
+    let mut files = std::fs::read_dir(temp.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    files.sort();
+    assert_eq!(files, [format!("{service}.jsonl.{date}")]);
+}
+
+#[test]
 fn log_target_path_overrides_dir() {
     let temp_dir = std::env::temp_dir().join("librebar-test-log-override");
     let file_path = temp_dir.join("override.jsonl");
