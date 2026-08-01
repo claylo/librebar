@@ -104,15 +104,8 @@ pub fn install(app_name: &str, version: &str) {
         };
 
         let dump_dir = crash_dump_dir(&app_name);
-        if let Some(path) = write_crash_dump_to(&info, &dump_dir) {
-            eprintln!(
-                "\n{} crashed. Crash report written to: {}\n",
-                app_name,
-                path.display()
-            );
-        } else {
-            eprintln!("\n{} crashed. (Could not write crash report.)\n", app_name);
-        }
+        let dump_path = write_crash_dump_to(&info, &dump_dir);
+        write_crash_notice(std::io::stderr().lock(), &app_name, dump_path.as_deref());
 
         prev_hook(panic_info);
     }));
@@ -177,6 +170,21 @@ pub fn crash_dump_dir(app_name: &str) -> PathBuf {
 
 // ─── Internal ───────────────────────────────────────────────────────
 
+fn write_crash_notice(mut writer: impl std::io::Write, app_name: &str, path: Option<&Path>) {
+    let result = match path {
+        Some(path) => writeln!(
+            writer,
+            "\n{app_name} crashed. Crash report written to: {}\n",
+            path.display()
+        ),
+        None => writeln!(
+            writer,
+            "\n{app_name} crashed. (Could not write crash report.)\n"
+        ),
+    };
+    let _ = result;
+}
+
 fn platform_cache_dir(app_name: &str) -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
         let home = std::env::var_os("HOME")?;
@@ -228,4 +236,33 @@ fn extract_panic_message(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
         return s.clone();
     }
     "<unknown panic payload>".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind, Write};
+
+    use super::*;
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(Error::new(ErrorKind::BrokenPipe, "stderr is closed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(Error::new(ErrorKind::BrokenPipe, "stderr is closed"))
+        }
+    }
+
+    #[test]
+    fn crash_notice_ignores_writer_failures() {
+        write_crash_notice(
+            &mut BrokenWriter,
+            "test-app",
+            Some(Path::new("/tmp/test-app.crash")),
+        );
+        write_crash_notice(&mut BrokenWriter, "test-app", None);
+    }
 }
