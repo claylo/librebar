@@ -24,15 +24,15 @@
 //! librebar::crash::install("myapp", env!("CARGO_PKG_VERSION"));
 //! ```
 
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::{fs::OpenOptions, io::Write as _};
 
 const MAX_CRASH_DUMPS: usize = 10;
 
 // ─── Public API ─────────────────────────────────────────────────────
 
 /// Structured crash information captured at panic time.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct CrashInfo {
     /// The panic message (from the panic payload).
     pub message: String,
@@ -134,7 +134,6 @@ pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
     let filename = format!("{}-{}.crash", info.app_name, ts);
     let path = dir.join(&filename);
 
-    let content = info.format();
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
 
@@ -145,7 +144,7 @@ pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
     }
 
     let mut file = options.open(&path).ok()?;
-    if file.write_all(content.as_bytes()).is_err() {
+    if serde_json::to_writer(&mut file, info).is_err() {
         drop(file);
         let _ = std::fs::remove_file(&path);
         return None;

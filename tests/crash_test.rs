@@ -47,6 +47,31 @@ fn write_crash_dump_creates_file() {
     assert!(content.contains("test-app"));
 }
 
+#[test]
+fn crash_dump_is_structured_json() {
+    let tmp = TempDir::new().unwrap();
+    let info = crash::CrashInfo {
+        message: "first line\nsecond line".to_string(),
+        location: Some("src/main.rs:42".to_string()),
+        app_name: "test-app".to_string(),
+        version: "0.1.0".to_string(),
+        timestamp: "2026-04-08T12:00:00.000Z".to_string(),
+        os: "macos".to_string(),
+        backtrace: "0: test::frame".to_string(),
+    };
+
+    let path = crash::write_crash_dump_to(&info, tmp.path()).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+
+    assert_eq!(value["message"], "first line\nsecond line");
+    assert_eq!(value["location"], "src/main.rs:42");
+    assert_eq!(value["app_name"], "test-app");
+    assert_eq!(value["version"], "0.1.0");
+    assert_eq!(value["timestamp"], "2026-04-08T12:00:00.000Z");
+    assert_eq!(value["os"], "macos");
+    assert_eq!(value["backtrace"], "0: test::frame");
+}
+
 #[cfg(unix)]
 #[test]
 fn crash_dump_is_owner_only() {
