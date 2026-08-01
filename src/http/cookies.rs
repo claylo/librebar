@@ -17,16 +17,27 @@ use crate::Result;
 use crate::error::HttpError;
 
 /// A shareable RFC 6265 cookie jar.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CookieJar {
     inner: Arc<RwLock<cookie_store::CookieStore>>,
+}
+
+impl Default for CookieJar {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(
+                cookie_store::CookieStore::new_with_public_suffix(Some(public_suffix_list())),
+            )),
+        }
+    }
 }
 
 impl CookieJar {
     pub(super) fn load_from(path: &Path) -> Result<Self> {
         let file = File::open(path).map_err(|source| cookie_error("load", path, source))?;
         let store = cookie_store::serde::json::load(BufReader::new(file))
-            .map_err(|source| cookie_box_error("load", path, source))?;
+            .map_err(|source| cookie_box_error("load", path, source))?
+            .with_suffix_list(public_suffix_list());
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
         })
@@ -113,6 +124,11 @@ impl CookieJar {
     }
 }
 
+fn public_suffix_list() -> publicsuffix::List {
+    publicsuffix::List::from_bytes(include_bytes!("public_suffix_list.dat"))
+        .expect("embedded public suffix list must be valid")
+}
+
 fn cookie_error(
     operation: &'static str,
     path: &Path,
@@ -176,5 +192,40 @@ where
             }
             Ok(response)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_rejects_cross_tenant_cookie(jar: &CookieJar) {
+        let attacker = Url::parse("https://attacker.github.io/").unwrap();
+        let cookie = cookie_store::RawCookie::parse(
+            "session=attacker; Domain=.github.io; Path=/".to_owned(),
+        )
+        .unwrap()
+        .into_owned();
+        jar.inner
+            .write()
+            .unwrap()
+            .store_response_cookies(std::iter::once(cookie), &attacker);
+
+        let victim = Url::parse("https://victim.github.io/").unwrap();
+        assert!(jar.request_header(&victim).is_none());
+    }
+
+    #[test]
+    fn default_jar_rejects_public_suffix_domain_cookies() {
+        assert_rejects_cross_tenant_cookie(&CookieJar::default());
+    }
+
+    #[test]
+    fn loaded_jar_rejects_public_suffix_domain_cookies() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"[]").unwrap();
+        let jar = CookieJar::load_from(file.path()).unwrap();
+
+        assert_rejects_cross_tenant_cookie(&jar);
     }
 }
