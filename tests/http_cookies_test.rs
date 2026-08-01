@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use librebar::http::HttpClient;
+use librebar::http::{CookieLimits, HttpClient};
 
 fn read_request(stream: &mut impl Read) -> String {
     let mut request = Vec::new();
@@ -62,6 +62,23 @@ fn redirect_response(location: &str, cookie: &str) -> Vec<u8> {
         "HTTP/1.1 302 Found\r\nLocation: {location}\r\nSet-Cookie: {cookie}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     )
     .into_bytes()
+}
+
+#[test]
+fn cookie_limits_are_configurable_through_the_client_builder() {
+    let limits = CookieLimits::default()
+        .max_cookie_bytes(8_192)
+        .max_cookies_per_domain(75)
+        .max_cookies_total(4_000);
+
+    assert_eq!(limits.cookie_bytes(), 8_192);
+    assert_eq!(limits.cookies_per_domain(), 75);
+    assert_eq!(limits.cookies_total(), 4_000);
+    HttpClient::builder("librebar-test", "0.1.0")
+        .cookie_limits(limits)
+        .with_cookie_jar()
+        .build()
+        .unwrap();
 }
 
 #[tokio::test]

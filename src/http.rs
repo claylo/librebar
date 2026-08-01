@@ -8,7 +8,7 @@
 //! - Retries for idempotent methods on 5xx and transport failures
 //! - A 16 MiB decoded response limit, configurable through the builder
 //! - Configurable user-agent and whole-operation timeout
-//! - Explicit per-client cookies behind the `http-cookies` feature
+//! - Explicit, resource-bounded per-client cookies behind the `http-cookies` feature
 //! - RFC-aware private GET caching behind the `http-cache` feature
 //! - `#[tracing::instrument]` on every request
 //! - GET, POST, PUT, PATCH, DELETE, and arbitrary [`Request`] support
@@ -107,7 +107,7 @@ use tower_http::follow_redirect::policy::{
 #[cfg(feature = "http-cookies")]
 mod cookies;
 #[cfg(feature = "http-cookies")]
-pub use cookies::CookieJar;
+pub use cookies::{CookieJar, CookieLimits};
 
 mod response;
 pub use hyper::header::{HeaderMap, HeaderValue};
@@ -240,6 +240,8 @@ pub struct HttpClientBuilder {
     config: HttpClientConfig,
     #[cfg(feature = "http-cookies")]
     cookie_jar: Option<CookieJarSource>,
+    #[cfg(feature = "http-cookies")]
+    cookie_limits: CookieLimits,
 }
 
 #[cfg(feature = "http-cookies")]
@@ -318,6 +320,14 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Set resource ceilings for a configured cookie jar.
+    #[cfg(feature = "http-cookies")]
+    #[must_use]
+    pub const fn cookie_limits(mut self, limits: CookieLimits) -> Self {
+        self.cookie_limits = limits;
+        self
+    }
+
     /// Build the configured client.
     pub fn build(self) -> Result<HttpClient> {
         #[cfg(feature = "http-cookies")]
@@ -325,8 +335,8 @@ impl HttpClientBuilder {
             let cookie_jar = self
                 .cookie_jar
                 .map(|source| match source {
-                    CookieJarSource::Empty => Ok(CookieJar::default()),
-                    CookieJarSource::File(path) => CookieJar::load_from(&path),
+                    CookieJarSource::Empty => Ok(CookieJar::with_limits(self.cookie_limits)),
+                    CookieJarSource::File(path) => CookieJar::load_from(&path, self.cookie_limits),
                 })
                 .transpose()?;
             HttpClient::build_inner(self.config, cookie_jar)
@@ -478,6 +488,8 @@ impl HttpClient {
             config: HttpClientConfig::new(app_name, version),
             #[cfg(feature = "http-cookies")]
             cookie_jar: None,
+            #[cfg(feature = "http-cookies")]
+            cookie_limits: CookieLimits::default(),
         }
     }
 

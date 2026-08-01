@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::future::Future;
 use std::io::{BufReader, BufWriter, Write};
@@ -16,31 +17,103 @@ use super::{RequestBody, ResponseBody};
 use crate::Result;
 use crate::error::HttpError;
 
-/// A shareable RFC 6265 cookie jar.
-#[derive(Clone, Debug)]
-pub struct CookieJar {
-    inner: Arc<RwLock<cookie_store::CookieStore>>,
+/// Resource ceilings for an HTTP cookie jar.
+///
+/// Defaults to 4,096 bytes per cookie name and value, 50 live cookies per
+/// domain, and 3,000 live cookies in total. A zero ceiling rejects or evicts
+/// every cookie in that category.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CookieLimits {
+    max_cookie_bytes: usize,
+    max_cookies_per_domain: usize,
+    max_cookies_total: usize,
 }
 
-impl Default for CookieJar {
+impl CookieLimits {
+    /// Set the maximum combined byte length of a cookie name and value.
+    #[must_use]
+    pub const fn max_cookie_bytes(mut self, maximum: usize) -> Self {
+        self.max_cookie_bytes = maximum;
+        self
+    }
+
+    /// Set the maximum number of live cookies retained for one domain.
+    #[must_use]
+    pub const fn max_cookies_per_domain(mut self, maximum: usize) -> Self {
+        self.max_cookies_per_domain = maximum;
+        self
+    }
+
+    /// Set the maximum number of live cookies retained across all domains.
+    #[must_use]
+    pub const fn max_cookies_total(mut self, maximum: usize) -> Self {
+        self.max_cookies_total = maximum;
+        self
+    }
+
+    /// Return the maximum combined byte length of a cookie name and value.
+    pub const fn cookie_bytes(&self) -> usize {
+        self.max_cookie_bytes
+    }
+
+    /// Return the maximum number of live cookies retained for one domain.
+    pub const fn cookies_per_domain(&self) -> usize {
+        self.max_cookies_per_domain
+    }
+
+    /// Return the maximum number of live cookies retained across all domains.
+    pub const fn cookies_total(&self) -> usize {
+        self.max_cookies_total
+    }
+}
+
+impl Default for CookieLimits {
     fn default() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(
-                cookie_store::CookieStore::new_with_public_suffix(Some(public_suffix_list())),
-            )),
+            max_cookie_bytes: 4_096,
+            max_cookies_per_domain: 50,
+            max_cookies_total: 3_000,
         }
     }
 }
 
+/// A shareable RFC 6265 cookie jar.
+#[derive(Clone, Debug)]
+pub struct CookieJar {
+    inner: Arc<RwLock<cookie_store::CookieStore>>,
+    limits: CookieLimits,
+}
+
+impl Default for CookieJar {
+    fn default() -> Self {
+        Self::with_limits(CookieLimits::default())
+    }
+}
+
 impl CookieJar {
-    pub(super) fn load_from(path: &Path) -> Result<Self> {
+    pub(super) fn with_limits(limits: CookieLimits) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(
+                cookie_store::CookieStore::new_with_public_suffix(Some(public_suffix_list())),
+            )),
+            limits,
+        }
+    }
+
+    pub(super) fn load_from(path: &Path, limits: CookieLimits) -> Result<Self> {
         let file = File::open(path).map_err(|source| cookie_error("load", path, source))?;
         let store = cookie_store::serde::json::load(BufReader::new(file))
             .map_err(|source| cookie_box_error("load", path, source))?
             .with_suffix_list(public_suffix_list());
-        Ok(Self {
+        let jar = Self {
             inner: Arc::new(RwLock::new(store)),
-        })
+            limits,
+        };
+        {
+            let mut store = jar.write_store();
+            jar.enforce_limits(&mut store);
+        }
+        Ok(jar)
     }
 
     /// Save unexpired cookies, including session cookies, to a JSON file.
@@ -115,8 +188,70 @@ impl CookieJar {
                     }
                 },
             )
-            .map(cookie_store::RawCookie::into_owned);
-        self.write_store().store_response_cookies(cookies, url);
+            .map(cookie_store::RawCookie::into_owned)
+            .filter(|cookie| {
+                let size = cookie.name().len() + cookie.value().len();
+                if size <= self.limits.max_cookie_bytes {
+                    return true;
+                }
+                tracing::warn!(
+                    cookie_name = cookie.name(),
+                    cookie_domain = cookie.domain().or_else(|| url.host_str()).unwrap_or(""),
+                    size,
+                    limit = self.limits.max_cookie_bytes,
+                    "dropping cookie that exceeds configured size limit"
+                );
+                false
+            });
+        let mut store = self.write_store();
+        store.store_response_cookies(cookies, url);
+        self.enforce_limits(&mut store);
+        drop(store);
+    }
+
+    fn enforce_limits(&self, store: &mut cookie_store::CookieStore) {
+        let oversized = stored_cookie_keys(store)
+            .into_iter()
+            .filter(|key| key.size > self.limits.max_cookie_bytes)
+            .collect::<Vec<_>>();
+        for key in oversized {
+            if store.remove(&key.domain, &key.path, &key.name).is_some() {
+                tracing::warn!(
+                    cookie_name = %key.name,
+                    cookie_domain = %key.domain,
+                    size = key.size,
+                    limit = self.limits.max_cookie_bytes,
+                    "dropping stored cookie that exceeds configured size limit"
+                );
+            }
+        }
+
+        let mut by_domain = BTreeMap::<String, Vec<StoredCookieKey>>::new();
+        for key in stored_cookie_keys(store) {
+            by_domain.entry(key.domain.clone()).or_default().push(key);
+        }
+        for cookies in by_domain.values_mut() {
+            cookies.sort_unstable();
+            let excess = cookies
+                .len()
+                .saturating_sub(self.limits.max_cookies_per_domain);
+            evict_cookies(
+                store,
+                cookies.iter().take(excess),
+                "per-domain cookie count",
+                self.limits.max_cookies_per_domain,
+            );
+        }
+
+        let mut cookies = stored_cookie_keys(store);
+        cookies.sort_unstable();
+        let excess = cookies.len().saturating_sub(self.limits.max_cookies_total);
+        evict_cookies(
+            store,
+            cookies.iter().take(excess),
+            "total cookie count",
+            self.limits.max_cookies_total,
+        );
     }
 
     fn read_store(&self) -> RwLockReadGuard<'_, cookie_store::CookieStore> {
@@ -138,6 +273,61 @@ impl CookieJar {
                 self.inner.clear_poison();
                 error.into_inner()
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct StoredCookieKey {
+    expiration_class: u8,
+    expires_at: i128,
+    domain: String,
+    path: String,
+    name: String,
+    size: usize,
+}
+
+fn stored_cookie_keys(store: &cookie_store::CookieStore) -> Vec<StoredCookieKey> {
+    store
+        .iter_unexpired()
+        .filter_map(|cookie| {
+            let domain = cookie.domain.as_cow()?.into_owned();
+            let (expiration_class, expires_at) = match cookie.expires {
+                cookie_store::CookieExpiration::AtUtc(expires_at) => {
+                    (0, expires_at.unix_timestamp_nanos())
+                }
+                cookie_store::CookieExpiration::SessionEnd => (1, 0),
+            };
+            Some(StoredCookieKey {
+                expiration_class,
+                expires_at,
+                domain,
+                path: cookie.path.as_ref().to_owned(),
+                name: cookie.name().to_owned(),
+                size: cookie.name().len() + cookie.value().len(),
+            })
+        })
+        .collect()
+}
+
+fn evict_cookies<'a>(
+    store: &mut cookie_store::CookieStore,
+    cookies: impl IntoIterator<Item = &'a StoredCookieKey>,
+    reason: &'static str,
+    limit: usize,
+) {
+    for cookie in cookies {
+        if store
+            .remove(&cookie.domain, &cookie.path, &cookie.name)
+            .is_some()
+        {
+            tracing::warn!(
+                cookie_name = %cookie.name,
+                cookie_domain = %cookie.domain,
+                reason,
+                limit,
+                "evicting cookie at configured resource limit"
+            );
         }
     }
 }
@@ -272,6 +462,24 @@ mod tests {
             .store_response_cookies(std::iter::once(cookie), url);
     }
 
+    fn cookie_response(values: &[&str]) -> Response<ResponseBody> {
+        let mut response = Response::builder();
+        for value in values {
+            response = response.header(SET_COOKIE, *value);
+        }
+        response
+            .body(
+                Full::new(Bytes::new())
+                    .map_err(|never| -> BoxError { match never {} })
+                    .boxed_unsync(),
+            )
+            .unwrap()
+    }
+
+    fn live_cookie_count(jar: &CookieJar) -> usize {
+        jar.read_store().iter_unexpired().count()
+    }
+
     fn poison_cookie_jar(jar: &CookieJar) {
         let inner = Arc::clone(&jar.inner);
         let result = std::thread::spawn(move || {
@@ -308,7 +516,7 @@ mod tests {
     fn loaded_jar_rejects_public_suffix_domain_cookies() {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), b"[]").unwrap();
-        let jar = CookieJar::load_from(file.path()).unwrap();
+        let jar = CookieJar::load_from(file.path(), CookieLimits::default()).unwrap();
 
         assert_rejects_cross_tenant_cookie(&jar);
     }
@@ -343,6 +551,84 @@ mod tests {
 
         assert_eq!(jar.request_header(&url).unwrap(), "session=secret");
         assert!(!jar.inner.is_poisoned());
+    }
+
+    #[test]
+    fn oversized_response_cookie_is_rejected() {
+        let jar = CookieJar::with_limits(CookieLimits::default().max_cookie_bytes(5));
+        let url = Url::parse("https://example.com/").unwrap();
+        let response = cookie_response(&["token=secret; Path=/"]);
+
+        jar.store_response(&url, &response);
+
+        assert!(jar.request_header(&url).is_none());
+    }
+
+    #[test]
+    fn nearest_expiry_is_evicted_at_the_per_domain_limit() {
+        let jar = CookieJar::with_limits(CookieLimits::default().max_cookies_per_domain(2));
+        let url = Url::parse("https://example.com/").unwrap();
+        let response = cookie_response(&[
+            "soon=1; Max-Age=60; Path=/",
+            "later=2; Max-Age=120; Path=/",
+            "session=3; Path=/",
+        ]);
+
+        jar.store_response(&url, &response);
+
+        let header = jar
+            .request_header(&url)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(live_cookie_count(&jar), 2);
+        assert!(!header.contains("soon=1"), "{header}");
+        assert!(header.contains("later=2"), "{header}");
+        assert!(header.contains("session=3"), "{header}");
+    }
+
+    #[test]
+    fn nearest_expiry_is_evicted_at_the_total_limit() {
+        let jar = CookieJar::with_limits(
+            CookieLimits::default()
+                .max_cookies_per_domain(3)
+                .max_cookies_total(2),
+        );
+        let soon_url = Url::parse("https://soon.example/").unwrap();
+        let later_url = Url::parse("https://later.example/").unwrap();
+        let session_url = Url::parse("https://session.example/").unwrap();
+
+        jar.store_response(&soon_url, &cookie_response(&["soon=1; Max-Age=60; Path=/"]));
+        jar.store_response(
+            &later_url,
+            &cookie_response(&["later=2; Max-Age=120; Path=/"]),
+        );
+        jar.store_response(&session_url, &cookie_response(&["session=3; Path=/"]));
+
+        assert_eq!(live_cookie_count(&jar), 2);
+        assert!(jar.request_header(&soon_url).is_none());
+        assert!(jar.request_header(&later_url).is_some());
+        assert!(jar.request_header(&session_url).is_some());
+    }
+
+    #[test]
+    fn loaded_cookie_jar_is_pruned_to_configured_limits() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let source = CookieJar::default();
+        let url = Url::parse("https://example.com/").unwrap();
+        store_cookie(&source, &url, "first=1; Path=/");
+        store_cookie(&source, &url, "second=2; Path=/");
+        store_cookie(&source, &url, "third=3; Path=/");
+        source.save_to(file.path()).unwrap();
+
+        let loaded = CookieJar::load_from(
+            file.path(),
+            CookieLimits::default().max_cookies_per_domain(2),
+        )
+        .unwrap();
+
+        assert_eq!(live_cookie_count(&loaded), 2);
     }
 
     #[test]
