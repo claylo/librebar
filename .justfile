@@ -39,6 +39,12 @@ test-ci:
 doc-test:
   cargo test --doc --all-features
 
+# Compile the default, empty, all-features, and every individual feature set.
+# --no-dev-deps prevents dev-dependency feature unification from hiding a
+# missing optional dependency edge in a published configuration.
+feature-matrix:
+  cargo hack check --each-feature --no-dev-deps
+
 cov:
   @cargo llvm-cov clean --workspace
   cargo llvm-cov nextest --no-report
@@ -73,4 +79,3 @@ upgrade-breaking:
 # See what WOULD update without doing it
 check-updates:
     cargo update --dry-run
-

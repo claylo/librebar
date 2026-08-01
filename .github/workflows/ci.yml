@@ -71,6 +71,33 @@ jobs:
       - name: doctests
         run: cargo test --doc --all-features
 
+  feature-matrix:
+    name: feature matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          cache-key-suffix: feature-matrix
+          toolchain: stable
+
+      - name: Install cargo-hack
+        uses: ./.github/actions/setup-cargo-tools
+        with:
+          binstall-tools: cargo-hack
+
+      - name: Check feature matrix
+        run: cargo hack check --each-feature --no-dev-deps
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -156,4 +183,3 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.msrv }}
         run: cargo check --all-targets --all-features
-

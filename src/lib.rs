@@ -139,6 +139,7 @@
 //! 1. Load config (if requested via `.config::<C>()` or `.config_from_file()`)
 //! 2. Initialize logging (reads verbosity from CLI flags if provided)
 //! 3. Return [`App<C>`] holding all initialized state and guards
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code)]
 
 pub mod error;
