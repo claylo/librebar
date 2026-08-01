@@ -100,9 +100,13 @@ pub struct OtelGuard {
 impl Drop for OtelGuard {
     fn drop(&mut self) {
         if let Err(e) = self.provider.shutdown() {
-            eprintln!("Error shutting down tracer provider: {e}");
+            write_shutdown_error(std::io::stderr().lock(), e);
         }
     }
+}
+
+fn write_shutdown_error(mut writer: impl std::io::Write, error: impl std::fmt::Display) {
+    let _ = writeln!(writer, "Error shutting down tracer provider: {error}");
 }
 
 /// Build the OpenTelemetry tracing layer and its guard.
@@ -171,5 +175,29 @@ fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::
             .with_endpoint(endpoint)
             .build()
             .map_err(crate::Error::OtelInit),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::write_shutdown_error;
+
+    struct BrokenWriter;
+
+    impl io::Write for BrokenWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed stderr"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed stderr"))
+        }
+    }
+
+    #[test]
+    fn shutdown_error_notice_ignores_broken_stderr() {
+        write_shutdown_error(BrokenWriter, "shutdown failed");
     }
 }

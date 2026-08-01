@@ -411,6 +411,10 @@ impl<W> JsonLogLayer<W> {
     }
 }
 
+fn write_sink_failure(mut writer: impl Write) {
+    let _ = writeln!(writer, "[librebar] failed to write log entry to sink");
+}
+
 impl<S, W> tracing_subscriber::Layer<S> for JsonLogLayer<W>
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
@@ -487,7 +491,7 @@ where
             // Best-effort: tracing Layer callbacks cannot return errors,
             // so fall back to stderr if the log sink is broken.
             if writer.write_all(&buf).is_err() {
-                eprintln!("[librebar] failed to write log entry to sink");
+                write_sink_failure(std::io::stderr().lock());
             }
         }
     }
@@ -555,6 +559,18 @@ impl tracing::field::Visit for JsonVisitor {
 mod tests {
     use super::*;
 
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed stderr"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed stderr"))
+        }
+    }
+
     #[test]
     fn default_log_candidates_exclude_the_working_directory() {
         let platform = PathBuf::from("platform-log-dir");
@@ -564,5 +580,10 @@ mod tests {
         }
 
         assert_eq!(default_log_candidates(Some(platform)), expected);
+    }
+
+    #[test]
+    fn sink_failure_notice_ignores_broken_stderr() {
+        write_sink_failure(BrokenWriter);
     }
 }

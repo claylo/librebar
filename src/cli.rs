@@ -237,16 +237,24 @@ impl CommonArgs {
     ///
     /// # Errors
     ///
-    /// Returns an error if `--chdir` names a directory that does not exist or
-    /// is not accessible.
+    /// Returns an error if `--version-only` cannot write to stdout, or if
+    /// `--chdir` names a directory that does not exist or is not accessible.
     pub fn apply(&self, version: &str) -> std::io::Result<Startup> {
+        self.apply_with_writer(version, std::io::stdout().lock())
+    }
+
+    fn apply_with_writer(
+        &self,
+        version: &str,
+        mut stdout: impl std::io::Write,
+    ) -> std::io::Result<Startup> {
         // Colors first, so anything printed afterwards is styled correctly.
         self.apply_color();
 
         // Answered before `apply_chdir` so that `--version-only` cannot fail
         // on an unrelated bad `-C`.
         if self.version_only {
-            println!("{version}");
+            writeln!(stdout, "{version}")?;
             return Ok(Startup::Exit);
         }
 
@@ -313,4 +321,42 @@ pub fn with_help_short(cmd: clap::Command) -> clap::Command {
             .global(true)
             .action(clap::ArgAction::HelpShort),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::{ColorChoice, CommonArgs, OutputFormat};
+
+    struct BrokenWriter;
+
+    impl io::Write for BrokenWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed stdout"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed stdout"))
+        }
+    }
+
+    #[test]
+    fn version_only_propagates_stdout_errors() {
+        let args = CommonArgs {
+            version_only: true,
+            chdir: None,
+            quiet: false,
+            verbose: 0,
+            color: ColorChoice::Never,
+            format: OutputFormat::Text,
+            legacy_json: false,
+        };
+
+        let error = args
+            .apply_with_writer("1.2.3", BrokenWriter)
+            .expect_err("a failed version write should propagate");
+
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
 }
