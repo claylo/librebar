@@ -2,7 +2,7 @@
 
 Opinionated application foundation for Rust CLIs and services. Add one dependency and get an agent-ready CLI, layered config with environment overrides, structured logging, crash dumps, file caching, and a diagnostics bundle — out of the box.
 
-```rust
+```rust,no_run
 use anyhow::Result;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -152,7 +152,9 @@ behavior. Cookie handling remains stateless unless an individual client calls
 
 Embed `CommonArgs` into your own clap struct with `#[command(flatten)]`:
 
-```rust
+```rust,no_run
+# #[derive(clap::Subcommand)]
+# enum Commands { Info }
 #[derive(clap::Parser)]
 struct Cli {
     #[command(flatten)]
@@ -182,7 +184,13 @@ running `sub`.
 redirected. An explicit format always wins. Use the typed result instead of
 branching on a boolean:
 
-```rust
+```rust,no_run
+# #[derive(clap::Parser)]
+# struct Cli {
+#     #[command(flatten)]
+#     common: librebar::cli::CommonArgs,
+# }
+# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
 match cli.common.output_format() {
     librebar::cli::ResolvedOutputFormat::Text => println!("human output"),
     librebar::cli::ResolvedOutputFormat::Json => println!(r#"{{"mode":"json"}}"#),
@@ -200,18 +208,30 @@ three.
 Parsing a flag is not the same as acting on it. Call `apply` once after
 parsing and the whole set is live:
 
-```rust
+```rust,no_run
+# #[derive(clap::Parser)]
+# struct Cli {
+#     #[command(flatten)]
+#     common: librebar::cli::CommonArgs,
+# }
+# fn main() -> librebar::Result<()> {
+# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
 if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
     return Ok(());
 }
+# Ok(())
+# }
 ```
 
 ### Machine-readable schema
 
 Use librebar's parser instead of calling Clap directly:
 
-```rust
+```rust,no_run
+# #[derive(clap::Parser)]
+# struct Cli {}
 let cli = librebar::cli::parse::<Cli>();
+# let _ = cli;
 ```
 
 It adds a visible `schema` subcommand and handles it before configuration,
@@ -223,7 +243,9 @@ Clap supplies command paths, descriptions, arguments, defaults, enums, value
 hints, groups, aliases, and conflicts. It cannot know whether a command mutates
 state or what its JSON and errors mean. Supply those facts explicitly:
 
-```rust
+```rust,no_run
+# #[derive(clap::Parser)]
+# struct Cli {}
 let metadata = librebar::cli::SchemaMetadata::new()
     .command(
         "widgets list",
@@ -238,6 +260,7 @@ let metadata = librebar::cli::SchemaMetadata::new()
             .retryable(false),
     );
 let cli = librebar::cli::parse_with::<Cli>(metadata);
+# let _ = cli;
 ```
 
 Metadata must name a real command path, and error/outcome exit codes may not
@@ -265,11 +288,17 @@ myapp completions bash > myapp.bash
 For packaging, render one page or generate the complete visible command tree
 through `clap_mangen`:
 
-```rust
+```rust,no_run
+# #[derive(clap::Parser)]
+# struct Cli {}
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 let mut page = Vec::new();
 librebar::cli::render_manpage::<Cli>(&mut page)?;
 
 let paths = librebar::cli::generate_manpages::<Cli>("target/man")?;
+# let _ = paths;
+# Ok(())
+# }
 ```
 
 Nested filenames contain the full path (`myapp-widgets-list.1`), preventing
@@ -293,11 +322,17 @@ different order or want to handle `--version-only` themselves.
 
 For compact help (`-h` shows short help, `--help` shows long help):
 
-```rust
-use clap::CommandFactory;
+```rust,no_run
+use clap::{CommandFactory, FromArgMatches};
+# #[derive(clap::Parser)]
+# struct Cli {}
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 let cmd = librebar::cli::with_help_short(Cli::command());
 let cli = Cli::from_arg_matches(&cmd.get_matches())?;
+# let _ = cli;
+# Ok(())
+# }
 ```
 
 ## Config
@@ -340,7 +375,7 @@ Values merge with later layers winning. Objects merge recursively. Scalars and
 arrays replace entirely. Your struct's `#[serde(default)]` values serve as the
 base layer.
 
-```
+```text
 defaults from Config::default()
   ← ~/.config/myapp/config.toml      (user config)
     ← ./myapp.toml                    (project config)
@@ -380,24 +415,38 @@ schema value for an optional non-string field.
 Unknown prefixed paths are ignored by default. Dynamic-map consumers can opt
 in to collecting them as strings:
 
-```rust
+```rust,no_run
 use librebar::config::{ConfigLoader, UnknownEnvironment};
+# #[derive(Default, serde::Deserialize, serde::Serialize)]
+# struct Config {}
+# fn main() -> librebar::Result<()> {
 
 let (config, sources) = ConfigLoader::new("my-app")
     .with_unknown_environment(UnknownEnvironment::Collect)
     .load::<Config>()?;
 let _ = (config, sources);
+# Ok(())
+# }
 ```
 
 ### Explicit files
 
 Load from a specific path instead of discovery:
 
-```rust
+```rust,no_run
+# #[derive(Default, serde::Deserialize, serde::Serialize)]
+# struct Config {}
+# struct Cli { pool_size: u16 }
+# fn main() -> librebar::Result<()> {
+# let config_path = librebar::camino::Utf8PathBuf::from("config.toml");
+# let cli = Cli { pool_size: 16 };
 let app = librebar::init("myapp")
     .config_from_file::<Config>(&config_path)
     .with_config_override("database.pool_size", cli.pool_size)
     .start()?;
+# let _ = app;
+# Ok(())
+# }
 ```
 
 Only add overrides for CLI flags the user actually supplied. Typed overrides
@@ -407,19 +456,33 @@ are applied in call order and beat every file and environment variable.
 
 Skip the builder entirely and use the config module directly:
 
-```rust
+```rust,no_run
+# #[derive(Default, serde::Deserialize, serde::Serialize)]
+# struct Config {}
+# fn main() -> librebar::Result<()> {
+# let cwd = librebar::camino::Utf8Path::new(".");
 let (config, sources) = librebar::config::ConfigLoader::new("myapp")
     .with_project_search(&cwd)
     .with_boundary_marker(".git")
     .load::<Config>()?;
+# let _ = (config, sources);
+# Ok(())
+# }
 ```
 
 Or load a pre-built config:
 
-```rust
+```rust,no_run
+# #[derive(Default, serde::Deserialize, serde::Serialize)]
+# struct Config {}
+# fn main() -> librebar::Result<()> {
+# let my_config = Config::default();
 let app = librebar::init("myapp")
     .with_config(my_config)
     .start()?;
+# let _ = app;
+# Ok(())
+# }
 ```
 
 ## Logging
@@ -443,7 +506,7 @@ Where `{APP}` is the uppercased, hyphen-to-underscore app name (e.g., `my-tool` 
 
 ### Log level precedence
 
-```
+```text
 --quiet       → error only
 -v            → debug
 -vv           → trace
@@ -455,10 +518,13 @@ RUST_LOG=...  → custom filter
 
 Use the logging module without the builder:
 
-```rust
+```rust,no_run
+# fn main() -> librebar::Result<()> {
 let log_cfg = librebar::logging::LoggingConfig::from_app_name("myapp");
 let filter = librebar::logging::env_filter(false, 0, "info");
 let _guard = librebar::logging::init(&log_cfg, filter)?;
+# Ok(())
+# }
 ```
 
 Hold the guard for the application's lifetime. When it drops, logs flush.
@@ -471,7 +537,16 @@ The builder wires everything in the correct initialization order:
 2. Initialize logging (reads log settings from config if available)
 3. Return `App<C>` with everything wired up
 
-```rust
+```rust,no_run
+# #[derive(Default, serde::Deserialize, serde::Serialize)]
+# struct Config {}
+# #[derive(clap::Parser)]
+# struct Cli {
+#     #[command(flatten)]
+#     common: librebar::cli::CommonArgs,
+# }
+# fn main() -> librebar::Result<()> {
+# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
 // Full setup — CLI, config, logging, crash handler
 let app = librebar::init(env!("CARGO_PKG_NAME"))
     .with_cli(cli.common)
@@ -484,15 +559,28 @@ let app = librebar::init(env!("CARGO_PKG_NAME"))
 let cfg: &Config = app.config();
 let sources = app.config_sources();
 let cli_args = app.cli();
+# let _ = (cfg, sources, cli_args);
+# Ok(())
+# }
 ```
 
 Without config, `.start()` returns `App<()>`:
 
-```rust
+```rust,no_run
+# #[derive(clap::Parser)]
+# struct Cli {
+#     #[command(flatten)]
+#     common: librebar::cli::CommonArgs,
+# }
+# fn main() -> librebar::Result<()> {
+# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
 let app = librebar::init("myapp")
     .with_cli(cli.common)
     .logging()
     .start()?;
+# let _ = app;
+# Ok(())
+# }
 ```
 
 ## Testing

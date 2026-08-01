@@ -142,6 +142,16 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code)]
 
+#[cfg(all(
+    doctest,
+    feature = "cli",
+    feature = "config",
+    feature = "logging",
+    feature = "crash"
+))]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
+
 pub mod error;
 
 #[cfg(any(feature = "logging", feature = "crash"))]
