@@ -114,6 +114,23 @@ fn debug_bundle_creates_archive() {
 }
 
 #[test]
+fn debug_bundle_streams_a_pre_sanitized_file_at_finish() {
+    let tmp = TempDir::new().unwrap();
+    let source = tmp.path().join("application.log");
+    std::fs::write(&source, "before finish").unwrap();
+
+    let mut bundle = DebugBundle::new("test-app", tmp.path());
+    bundle.add_sanitized_file("logs/application.log", &source);
+
+    std::fs::write(&source, "content read at finish").unwrap();
+    let archive_path = bundle.finish().unwrap();
+    let (content, mode) = read_archive_entry(&archive_path, "logs/application.log");
+
+    assert_eq!(content, b"content read at finish");
+    assert_eq!(mode & 0o777, 0o600);
+}
+
+#[test]
 fn debug_bundle_redacts_sensitive_values_from_text_formats() {
     let tmp = TempDir::new().unwrap();
     let mut bundle = DebugBundle::new("test-app", tmp.path());
@@ -177,7 +194,7 @@ fn debug_bundle_redacts_sensitive_values_from_text_formats() {
 fn debug_bundle_accepts_a_custom_redactor() {
     let tmp = TempDir::new().unwrap();
     let mut bundle = DebugBundle::new("test-app", tmp.path()).with_redactor(FixedRedactor);
-    bundle.add_bytes("opaque.bin", b"private bytes");
+    bundle.add_bytes("opaque.bin", b"private bytes".to_vec());
 
     let archive_path = bundle.finish().unwrap();
     let (content, _) = read_archive_entry(&archive_path, "opaque.bin");

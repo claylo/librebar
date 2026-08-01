@@ -452,8 +452,14 @@ fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
 pub struct DebugBundle {
     app_name: String,
     dir: PathBuf,
-    files: Vec<(String, Vec<u8>)>,
+    entries: Vec<DebugBundleEntry>,
     redactor: Box<dyn Redactor>,
+}
+
+#[derive(Debug)]
+enum DebugBundleEntry {
+    Buffered { name: String, data: Vec<u8> },
+    SanitizedFile { name: String, path: PathBuf },
 }
 
 impl fmt::Debug for DebugBundle {
@@ -462,7 +468,7 @@ impl fmt::Debug for DebugBundle {
             .debug_struct("DebugBundle")
             .field("app_name", &self.app_name)
             .field("dir", &self.dir)
-            .field("files", &self.files)
+            .field("entries", &self.entries)
             .field("redactor", &"<redactor>")
             .finish()
     }
@@ -476,7 +482,7 @@ impl DebugBundle {
         Self {
             app_name: app_name.to_string(),
             dir: dir.to_path_buf(),
-            files: Vec::new(),
+            entries: Vec::new(),
             redactor: Box::new(SecretRedactor::default()),
         }
     }
@@ -495,10 +501,32 @@ impl DebugBundle {
         self.add_bytes(name, content.as_bytes())
     }
 
-    /// Add a binary file to the bundle after redaction.
-    pub fn add_bytes(&mut self, name: &str, data: &[u8]) -> &mut Self {
-        let data = self.redactor.redact(name, data);
-        self.files.push((name.to_string(), data));
+    /// Add binary content to the bundle after redaction.
+    ///
+    /// Passing an owned [`Vec<u8>`] moves the caller's buffer into this method
+    /// instead of cloning it at the API boundary.
+    pub fn add_bytes(&mut self, name: &str, data: impl Into<Vec<u8>>) -> &mut Self {
+        let data = data.into();
+        let data = self.redactor.redact(name, &data);
+        self.entries.push(DebugBundleEntry::Buffered {
+            name: name.to_string(),
+            data,
+        });
+        self
+    }
+
+    /// Add a file that the caller has already sanitized.
+    ///
+    /// The file path is retained and its content is streamed into the archive
+    /// by [`Self::finish`], so the source must remain available and sanitized
+    /// until then. This method deliberately does not run the configured
+    /// [`Redactor`]; use [`Self::add_text`] or [`Self::add_bytes`] for content
+    /// that has not already crossed a trusted redaction boundary.
+    pub fn add_sanitized_file(&mut self, name: &str, path: &Path) -> &mut Self {
+        self.entries.push(DebugBundleEntry::SanitizedFile {
+            name: name.to_string(),
+            path: path.to_path_buf(),
+        });
         self
     }
 
@@ -524,14 +552,28 @@ impl DebugBundle {
         let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
         let mut archive = tar::Builder::new(encoder);
 
-        for (name, data) in &self.files {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(data.len() as u64);
-            header.set_mode(0o600);
-            header.set_cksum();
-            archive
-                .append_data(&mut header, name, data.as_slice())
-                .map_err(Error::Diagnostic)?;
+        for entry in &self.entries {
+            match entry {
+                DebugBundleEntry::Buffered { name, data } => {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(data.len() as u64);
+                    header.set_mode(0o600);
+                    header.set_cksum();
+                    archive
+                        .append_data(&mut header, name, data.as_slice())
+                        .map_err(Error::Diagnostic)?;
+                }
+                DebugBundleEntry::SanitizedFile { name, path } => {
+                    let file = std::fs::File::open(path).map_err(Error::Diagnostic)?;
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(file.metadata().map_err(Error::Diagnostic)?.len());
+                    header.set_mode(0o600);
+                    header.set_cksum();
+                    archive
+                        .append_data(&mut header, name, file)
+                        .map_err(Error::Diagnostic)?;
+                }
+            }
         }
 
         archive
