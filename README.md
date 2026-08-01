@@ -149,9 +149,11 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 The `http` client follows up to 10 redirects, transparently decodes gzip and
 Brotli responses, and retries idempotent methods up to three times on 5xx or
 transport failures with exponential backoff. Decoded response bodies are
-limited to 16 MiB by default. `HttpClient::builder` can tune or disable each
-behavior. Cookie handling remains stateless unless an individual client calls
-`with_cookie_jar()` or `with_cookie_jar_from()`.
+limited to 16 MiB by default. Redirects cannot downgrade HTTPS to HTTP;
+cross-origin redirects discard caller-supplied headers and request extensions,
+then restore only the configured user-agent. `HttpClient::builder` can tune or
+disable each behavior. Cookie handling remains stateless unless an individual
+client calls `with_cookie_jar()` or `with_cookie_jar_from()`.
 
 ## CLI
 

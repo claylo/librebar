@@ -13,8 +13,8 @@
 
 use hyper::header::{ETAG, LAST_MODIFIED};
 use librebar::http::{
-    ConditionalResponse, HeaderMap, HeaderValue, HttpClient, HttpClientConfig, ModificationCheck,
-    RetryPolicy, StatusCode, Validator, Version,
+    Bytes, ConditionalResponse, HeaderMap, HeaderValue, HttpClient, HttpClientConfig,
+    ModificationCheck, Request, RetryPolicy, StatusCode, Validator, Version,
 };
 #[cfg(feature = "logging")]
 use std::collections::BTreeMap;
@@ -576,6 +576,36 @@ async fn follows_standard_redirect_statuses() {
     ] {
         assert_follows_redirect(status).await;
     }
+}
+
+#[tokio::test]
+async fn cross_origin_redirect_strips_caller_headers() {
+    let (target_address, target_requests, target_server) =
+        spawn_server(1, |_, _| response("200 OK", &[], b"arrived"));
+    let location = format!("http://{target_address}/final");
+    let (source_address, source_requests, source_server) = spawn_server(1, move |_, _| {
+        response("302 Found", &[("Location", &location)], b"")
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let request = Request::builder()
+        .uri(format!("http://{source_address}/start"))
+        .header("x-api-key", "secret")
+        .body(Bytes::new())
+        .unwrap();
+
+    let result = client.send(request).await.unwrap();
+
+    assert_eq!(result.status(), StatusCode::OK);
+    let source = source_requests.recv().unwrap().to_ascii_lowercase();
+    assert!(source.contains("x-api-key: secret\r\n"), "{source}");
+    let target = target_requests.recv().unwrap().to_ascii_lowercase();
+    assert!(!target.contains("x-api-key:"), "{target}");
+    assert!(
+        target.contains("user-agent: librebar-test/0.1.0\r\n"),
+        "{target}"
+    );
+    source_server.join().unwrap();
+    target_server.join().unwrap();
 }
 
 async fn assert_post_redirect_semantics(

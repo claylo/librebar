@@ -3,7 +3,7 @@
 //! Provides a production-oriented wrapper around Hyper with:
 //! - TLS via rustls (Mozilla CA roots, no system OpenSSL dependency)
 //! - HTTP/2 with HTTP/1.1 fallback
-//! - Redirect following (10 hops by default, with loop detection)
+//! - Redirect following (10 hops by default, with loop and downgrade protection)
 //! - Transparent gzip and Brotli response decompression
 //! - Retries for idempotent methods on 5xx and transport failures
 //! - A 16 MiB decoded response limit, configurable through the builder
@@ -345,6 +345,7 @@ type HttpService =
 
 #[derive(Debug)]
 enum RedirectError {
+    Downgrade,
     Loop,
     TooMany { maximum: usize },
 }
@@ -352,6 +353,7 @@ enum RedirectError {
 impl std::fmt::Display for RedirectError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Downgrade => formatter.write_str("refused HTTPS-to-HTTP redirect"),
             Self::Loop => formatter.write_str("redirect loop detected"),
             Self::TooMany { maximum } => {
                 write!(formatter, "too many redirects (maximum {maximum})")
@@ -368,21 +370,53 @@ struct RedirectPolicy {
     remaining: usize,
     visited: HashSet<(Method, hyper::Uri)>,
     credentials: FilterCredentials,
+    user_agent: HeaderValue,
+    cross_origin: bool,
 }
 
 impl RedirectPolicy {
-    fn new(maximum: usize) -> Self {
+    fn new(maximum: usize, user_agent: HeaderValue) -> Self {
         Self {
             maximum,
             remaining: maximum,
             visited: HashSet::new(),
-            credentials: FilterCredentials::default(),
+            credentials: FilterCredentials::default().remove_all(),
+            user_agent,
+            cross_origin: false,
         }
     }
 }
 
+fn same_origin(left: &hyper::Uri, right: &hyper::Uri) -> bool {
+    let default_port = match (left.scheme_str(), right.scheme_str()) {
+        (Some(left_scheme), Some(right_scheme)) if left_scheme == right_scheme => match left_scheme
+        {
+            "http" => 80,
+            "https" => 443,
+            _ => return false,
+        },
+        _ => return false,
+    };
+    if left.host() != right.host() {
+        return false;
+    }
+    left.port_u16().unwrap_or(default_port) == right.port_u16().unwrap_or(default_port)
+}
+
+fn validate_redirect_target(
+    previous: &hyper::Uri,
+    location: &hyper::Uri,
+) -> std::result::Result<(), RedirectError> {
+    if previous.scheme_str() == Some("https") && location.scheme_str() == Some("http") {
+        return Err(RedirectError::Downgrade);
+    }
+    Ok(())
+}
+
 impl RedirectPolicyTrait<RequestBody, BoxError> for RedirectPolicy {
     fn redirect(&mut self, attempt: &Attempt<'_>) -> std::result::Result<Action, BoxError> {
+        validate_redirect_target(attempt.previous(), attempt.location())
+            .map_err(|error| Box::new(error) as BoxError)?;
         self.visited.insert((
             attempt.previous_method().clone(),
             attempt.previous().clone(),
@@ -400,11 +434,17 @@ impl RedirectPolicyTrait<RequestBody, BoxError> for RedirectPolicy {
         }
 
         self.remaining -= 1;
+        self.cross_origin = !same_origin(attempt.previous(), attempt.location());
         RedirectPolicyTrait::<RequestBody, BoxError>::redirect(&mut self.credentials, attempt)
     }
 
     fn on_request(&mut self, request: &mut Request<RequestBody>) {
         RedirectPolicyTrait::<RequestBody, BoxError>::on_request(&mut self.credentials, request);
+        if self.cross_origin {
+            request
+                .headers_mut()
+                .insert(hyper::header::USER_AGENT, self.user_agent.clone());
+        }
     }
 
     fn clone_body(&self, body: &RequestBody) -> Option<RequestBody> {
@@ -492,9 +532,11 @@ impl HttpClient {
         }
 
         if config.max_redirects > 0 {
+            let user_agent =
+                HeaderValue::from_str(&config.user_agent).map_err(HttpError::InvalidHeaderValue)?;
             inner = HttpService::new(FollowRedirect::with_policy(
                 inner,
-                RedirectPolicy::new(config.max_redirects),
+                RedirectPolicy::new(config.max_redirects, user_agent),
             ));
         }
         Ok(Self {
@@ -636,7 +678,10 @@ impl HttpClient {
     /// Send a pre-built HTTP request.
     ///
     /// This is the escape hatch for custom headers. The configured user-agent
-    /// is inserted when the request does not already contain one.
+    /// is inserted when the request does not already contain one. Same-origin
+    /// redirects preserve request headers and extensions. Cross-origin
+    /// redirects discard them and restore only the configured user-agent.
+    /// HTTPS-to-HTTP redirects are refused.
     #[tracing::instrument(
         skip(self, request),
         fields(method = %request.method(), url = %sanitized_uri(request.uri()))
@@ -815,6 +860,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn https_redirects_cannot_downgrade_to_http() {
+        let previous = "https://example.com/start".parse().unwrap();
+        let location = "http://example.com/final".parse().unwrap();
+
+        let error = validate_redirect_target(&previous, &location).unwrap_err();
+
+        assert_eq!(error.to_string(), "refused HTTPS-to-HTTP redirect");
+    }
+
     struct FrameBody(VecDeque<std::result::Result<Frame<Bytes>, Infallible>>);
 
     impl Body for FrameBody {
@@ -927,6 +982,7 @@ fn map_service_error(error: BoxError) -> HttpError {
             .downcast::<RedirectError>()
             .expect("type checked before downcast")
         {
+            RedirectError::Downgrade => HttpError::RedirectDowngrade,
             RedirectError::Loop => HttpError::RedirectLoop,
             RedirectError::TooMany { maximum } => HttpError::TooManyRedirects { maximum },
         };

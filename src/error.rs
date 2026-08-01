@@ -135,6 +135,9 @@ pub enum HttpError {
     /// Connection, protocol, or middleware error during request.
     #[error("request: {0}")]
     Request(#[source] tower::BoxError),
+    /// A redirect attempted to move an HTTPS request to plaintext HTTP.
+    #[error("refused HTTPS-to-HTTP redirect")]
+    RedirectDowngrade,
     /// A redirect returned to a URI already visited by this request.
     #[error("redirect loop detected")]
     RedirectLoop,
