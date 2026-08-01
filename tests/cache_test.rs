@@ -100,6 +100,78 @@ fn expired_entry_returns_none() {
 }
 
 #[test]
+fn prune_removes_only_expired_v2_entries() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    let unrelated = tmp.path().join("notes.txt");
+    let malformed = tmp.path().join("v2-malformed.cache");
+
+    cache.set("expired", b"old", Duration::ZERO).unwrap();
+    cache
+        .set("live", b"current", Duration::from_secs(60))
+        .unwrap();
+    std::fs::write(&unrelated, b"keep").unwrap();
+    std::fs::write(&malformed, b"not a cache header").unwrap();
+
+    assert_eq!(cache.prune().unwrap(), 1);
+    assert!(!cache_entry_path(tmp.path(), "expired").exists());
+    assert!(cache_entry_path(tmp.path(), "live").exists());
+    assert!(unrelated.exists());
+    assert!(malformed.exists());
+}
+
+#[test]
+fn prune_treats_a_missing_directory_as_empty() {
+    let tmp = TempDir::new().unwrap();
+    let missing = tmp.path().join("missing");
+    let cache = Cache::new(&missing);
+
+    assert_eq!(cache.prune().unwrap(), 0);
+    assert!(!missing.exists());
+}
+
+#[test]
+fn first_write_through_a_new_handle_prunes_expired_entries() {
+    let tmp = TempDir::new().unwrap();
+    let expired_path = cache_entry_path(tmp.path(), "expired");
+
+    let original = Cache::new(tmp.path());
+    original.set("expired", b"old", Duration::ZERO).unwrap();
+    assert!(expired_path.exists());
+
+    let restarted = Cache::new(tmp.path());
+    restarted
+        .set("fresh", b"current", Duration::from_secs(60))
+        .unwrap();
+
+    assert!(!expired_path.exists());
+    assert_eq!(
+        restarted.get("fresh").unwrap().as_deref(),
+        Some(b"current".as_ref())
+    );
+}
+
+#[test]
+fn cloned_handles_share_the_automatic_prune_cadence() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    cache
+        .set("seed", b"current", Duration::from_secs(60))
+        .unwrap();
+    cache.set("expired", b"old", Duration::ZERO).unwrap();
+    let expired_path = cache_entry_path(tmp.path(), "expired");
+    assert!(expired_path.exists());
+
+    let cloned = cache.clone();
+    cloned
+        .set("next", b"current", Duration::from_secs(60))
+        .unwrap();
+
+    assert!(expired_path.exists());
+    assert_eq!(cache.prune().unwrap(), 1);
+}
+
+#[test]
 fn remove_deletes_entry() {
     let tmp = TempDir::new().unwrap();
     let cache = Cache::new(tmp.path());

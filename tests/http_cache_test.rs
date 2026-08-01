@@ -61,6 +61,11 @@ fn response(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     response
 }
 
+fn cache_entry_path(dir: &std::path::Path, key: &str) -> std::path::PathBuf {
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes());
+    dir.join(format!("v2-{encoded}.cache"))
+}
+
 #[tokio::test]
 async fn direct_get_has_no_cache_status() {
     let (address, requests, server) = spawn_server(1, |_, _| response("200 OK", &[], b"direct"));
@@ -94,6 +99,36 @@ async fn cached_get_misses_then_serves_a_fresh_hit_without_network() {
     assert_eq!(hit.cache_status(), Some(CacheStatus::Hit));
     assert_eq!(hit.status(), StatusCode::OK);
     assert_eq!(hit.bytes(), b"version one");
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn http_cache_writes_share_the_callers_prune_cadence() {
+    let cache_dir = tempfile::tempdir().unwrap();
+    let cache = Cache::new(cache_dir.path());
+    cache
+        .set("seed", b"current", Duration::from_secs(60))
+        .unwrap();
+    cache.set("expired", b"old", Duration::ZERO).unwrap();
+    let expired_path = cache_entry_path(cache_dir.path(), "expired");
+    assert!(expired_path.exists());
+
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        response(
+            "200 OK",
+            &[("Cache-Control", "max-age=3600")],
+            b"version one",
+        )
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    client
+        .get_cached(&cache, "item", &format!("http://{address}/item"))
+        .await
+        .unwrap();
+
+    assert!(expired_path.exists());
     requests.recv().unwrap();
     server.join().unwrap();
 }

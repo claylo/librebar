@@ -2,7 +2,8 @@
 //!
 //! Provides a simple key-value cache backed by owner-only, atomically replaced
 //! files. Each v2 entry stores a fixed expiry header followed by the raw value.
-//! Expired entries are treated as missing and cleaned up on access.
+//! Expired entries are treated as missing and cleaned up on access, explicit
+//! pruning, and periodic write-path maintenance.
 //!
 //! # Example
 //!
@@ -26,6 +27,8 @@
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use atomic_write_file::AtomicWriteFile;
@@ -35,11 +38,17 @@ use crate::error::{CacheError, Result};
 
 const CACHE_MAGIC: &[u8; 8] = b"LBRCA02\0";
 const CACHE_HEADER_LEN: usize = 16;
+const AUTOMATIC_PRUNE_INTERVAL_SECS: u64 = 60 * 60;
 
 /// File-based cache with TTL support.
-#[derive(Debug)]
+///
+/// Expired entries are removed when read, when [`Cache::prune`] is called, and
+/// opportunistically before the first write and at most hourly afterward.
+/// The cache does not impose an entry-count or byte-size ceiling.
+#[derive(Clone, Debug)]
 pub struct Cache {
     dir: PathBuf,
+    last_prune: Arc<AtomicU64>,
 }
 
 impl Cache {
@@ -47,6 +56,7 @@ impl Cache {
     pub fn new(dir: &Path) -> Self {
         Self {
             dir: dir.to_path_buf(),
+            last_prune: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -71,8 +81,10 @@ impl Cache {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let expires_at = now.as_secs().saturating_add(ttl.as_secs());
+            .unwrap_or_default()
+            .as_secs();
+        self.prune_if_due(now);
+        let expires_at = now.saturating_add(ttl.as_secs());
         let mut header = [0_u8; CACHE_HEADER_LEN];
         header[..CACHE_MAGIC.len()].copy_from_slice(CACHE_MAGIC);
         header[CACHE_MAGIC.len()..].copy_from_slice(&expires_at.to_be_bytes());
@@ -114,6 +126,92 @@ impl Cache {
         }
 
         Ok(Some(value))
+    }
+
+    /// Remove expired entries and return the number removed.
+    ///
+    /// Only v2 cache files are inspected. Missing directories are treated as
+    /// empty, and malformed or individually inaccessible entries are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Cache`](crate::Error::Cache) if the cache directory
+    /// cannot be read.
+    pub fn prune(&self) -> Result<usize> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let removed = self.prune_at(now)?;
+        self.last_prune.store(now, Ordering::Relaxed);
+        Ok(removed)
+    }
+
+    fn prune_if_due(&self, now: u64) {
+        let previous = self.last_prune.load(Ordering::Relaxed);
+        if previous != 0 && now.saturating_sub(previous) < AUTOMATIC_PRUNE_INTERVAL_SECS {
+            return;
+        }
+        if self
+            .last_prune
+            .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
+        if let Err(error) = self.prune_at(now) {
+            let _ = self.last_prune.compare_exchange(
+                now,
+                previous,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+            tracing::warn!(error = %error, "automatic cache pruning failed");
+        }
+    }
+
+    fn prune_at(&self, now: u64) -> Result<usize> {
+        let entries = match std::fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(CacheError::from(error).into()),
+        };
+        let mut removed = 0;
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to inspect cache directory entry");
+                    continue;
+                }
+            };
+            let path = entry.path();
+            if !is_v2_cache_path(&path) {
+                continue;
+            }
+            let expires_at = match read_expiry_at(&path) {
+                Ok(expires_at) => expires_at,
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to inspect cache entry while pruning");
+                    continue;
+                }
+            };
+            if now < expires_at {
+                continue;
+            }
+
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to remove expired cache entry");
+                }
+            }
+        }
+
+        Ok(removed)
     }
 
     /// Remove a cached entry.
@@ -179,6 +277,13 @@ where
 
 fn read_entry(path: &Path) -> std::result::Result<(u64, Vec<u8>), CacheError> {
     let mut file = std::fs::File::open(path)?;
+    let expires_at = read_expiry(&mut file)?;
+    let mut value = Vec::new();
+    file.read_to_end(&mut value)?;
+    Ok((expires_at, value))
+}
+
+fn read_expiry(file: &mut std::fs::File) -> std::result::Result<u64, CacheError> {
     let mut header = [0_u8; CACHE_HEADER_LEN];
     if let Err(error) = file.read_exact(&mut header) {
         return if error.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -193,14 +298,22 @@ fn read_entry(path: &Path) -> std::result::Result<(u64, Vec<u8>), CacheError> {
         ));
     }
 
-    let expires_at = u64::from_be_bytes(
+    Ok(u64::from_be_bytes(
         header[CACHE_MAGIC.len()..]
             .try_into()
             .expect("cache expiry occupies eight bytes"),
-    );
-    let mut value = Vec::new();
-    file.read_to_end(&mut value)?;
-    Ok((expires_at, value))
+    ))
+}
+
+fn read_expiry_at(path: &Path) -> std::result::Result<u64, CacheError> {
+    let mut file = std::fs::File::open(path)?;
+    read_expiry(&mut file)
+}
+
+fn is_v2_cache_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("v2-") && name.ends_with(".cache"))
 }
 
 fn write_entry(path: &Path, header: &[u8], parts: &[&[u8]]) -> std::io::Result<()> {

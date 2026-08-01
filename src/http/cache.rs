@@ -426,7 +426,7 @@ fn policy_request(wire: &Request<Bytes>) -> Result<Request<()>> {
 }
 
 async fn load_entry(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
-    let cache = Cache::new(cache.dir());
+    let cache = cache.clone();
     let key = key.to_owned();
     crate::cache::run_io(move || load_entry_blocking(&cache, &key)).await
 }
@@ -457,7 +457,7 @@ fn load_entry_blocking(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntr
 }
 
 async fn remove_entry(cache: &Cache, key: &str) -> Result<()> {
-    let cache = Cache::new(cache.dir());
+    let cache = cache.clone();
     let namespaced = namespaced_key(key);
     crate::cache::run_io(move || cache.remove(&namespaced)).await
 }
@@ -623,7 +623,7 @@ async fn persist_cached_response(
     now: SystemTime,
     stale_retention: Duration,
 ) -> Result<CachedResponse> {
-    let cache = Cache::new(cache.dir());
+    let cache = cache.clone();
     let key = key.to_owned();
     let policy = policy.clone();
     crate::cache::run_io(move || {
