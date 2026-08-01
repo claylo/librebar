@@ -117,7 +117,7 @@ impl UpdateChecker {
         };
 
         if !resp.is_success() {
-            tracing::debug!(status = resp.status, "GitHub API returned non-200");
+            tracing::debug!(status = %resp.status(), "GitHub API returned non-200");
             return None;
         }
 

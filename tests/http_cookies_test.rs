@@ -160,7 +160,7 @@ async fn redirect_hops_can_set_cookies_for_the_next_request() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), librebar::http::StatusCode::OK);
     assert!(
         !requests
             .recv()

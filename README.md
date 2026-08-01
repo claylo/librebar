@@ -98,6 +98,7 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 |---------|-------------|
 | `http` | Hyper client with redirects, gzip/Brotli decompression, idempotent retries, timeouts, and rustls |
 | `http-cookies` | Explicit per-client RFC 6265 cookie jars with JSON persistence |
+| `http-cache` | RFC-aware private GET caching with ETag, Last-Modified, and `Vary` support |
 | `update` | "Update available" notifications via the GitHub releases API (24-hour cache) |
 | `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
 | `otel` | OpenTelemetry tracing export via OTLP/HTTP |
@@ -113,7 +114,7 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 | `bench` | Wall-clock benchmarks via [divan](https://crates.io/crates/divan) (any platform) |
 | `bench-gungraun` | Instruction-count benchmarks via [gungraun](https://crates.io/crates/gungraun) / Valgrind (Linux/Intel) |
 
-Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
+Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; `http-cache` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
 
 ## Typical feature sets
 
@@ -129,6 +130,9 @@ librebar = { version = "0.3", features = ["update"] }
 
 # Stateful HTTP client with an explicitly enabled cookie jar
 librebar = { version = "0.3", features = ["http-cookies"] }
+
+# RFC-aware persistent GET caching
+librebar = { version = "0.3", features = ["http-cache"] }
 
 # Plugin-extensible CLI (git-style subcommands)
 librebar = { version = "0.3", features = ["dispatch"] }

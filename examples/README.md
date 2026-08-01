@@ -13,6 +13,7 @@ Every example is a full `main()` you can read top-to-bottom.
 | [`service`](service.rs) | Long-running async service: shutdown token, crash dumps, optional OTEL export | `shutdown`, `otel` |
 | [`updater`](updater.rs) | GitHub releases check: real HTTPS call, 24h cache, `{APP}_NO_UPDATE_CHECK` gate | `update` |
 | [`http-cookies`](http-cookies.rs) | Stateful Hyper client: redirect-time cookie capture and persistent jar | `http-cookies` |
+| [`http-cache`](http-cache.rs) | RFC-aware cached GET: explicit cache key, freshness, and conditional revalidation | `http-cache` |
 | [`plugin-cli`](plugin-cli/main.rs) | Git-style external subcommand dispatch with a paired plugin binary | `dispatch` |
 | [`doctor-bundle`](doctor-bundle.rs) | Health checks with `DoctorRunner` + `DebugBundle` tar.gz for bug reports | None |
 | [`mcp-server`](mcp-server.rs) | Minimal MCP server over stdio — single `greet` tool, manual `ServerHandler` impl | `mcp` |
@@ -29,10 +30,15 @@ cargo run --example minimal -- --help
 cargo run --example service --features "shutdown,otel" -- --help
 cargo run --example updater --features "update" -- --help
 cargo run --example http-cookies --features "http-cookies" -- /tmp/librebar-cookies.json
+cargo run --example http-cache --features "http-cache"
 cargo run --example plugin-cli --features "dispatch" -- --help
 cargo run --example doctor-bundle -- --help
 cargo run --example mcp-server --features "mcp" -- --help
 ```
+
+Run `http-cache` repeatedly with the same URL and key: the first response is a
+`Miss`, a still-fresh response is a `Hit`, and a stale validator-confirmed
+response is `Revalidated`.
 
 Every librebar-powered example uses `librebar::cli::parse`, so it also exposes
 the generated `schema` and `completions` subcommands before normal startup:

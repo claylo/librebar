@@ -24,9 +24,11 @@
 //! Default: `~/Library/Caches/{app}/librebar/` on macOS,
 //! `$XDG_CACHE_HOME/{app}/librebar/` on Linux.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use atomic_write_file::AtomicWriteFile;
 use base64::Engine;
 
 use crate::error::{CacheError, Result};
@@ -72,7 +74,7 @@ impl Cache {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
-        let expires_at = now.as_secs() + ttl.as_secs();
+        let expires_at = now.as_secs().saturating_add(ttl.as_secs());
 
         let entry = CacheEntry {
             expires_at,
@@ -81,7 +83,7 @@ impl Cache {
 
         let path = self.key_path(key);
         let json = serde_json::to_vec(&entry).map_err(CacheError::from)?;
-        std::fs::write(&path, json).map_err(CacheError::from)?;
+        write_entry(&path, &json).map_err(CacheError::from)?;
 
         tracing::debug!(key, expires_at, "cache entry written");
         Ok(())
@@ -171,6 +173,20 @@ impl Cache {
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes());
         self.dir.join(format!("v1-{encoded}.json"))
     }
+}
+
+fn write_entry(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = AtomicWriteFile::options();
+    #[cfg(unix)]
+    {
+        use atomic_write_file::unix::OpenOptionsExt as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600).preserve_mode(false);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    file.commit()
 }
 
 /// Get the default cache directory for an application.

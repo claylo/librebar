@@ -67,6 +67,10 @@ rustls = { version = "0.23.40", default-features = false, optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 tower-http = { version = "0.7", features = ["decompression-br", "decompression-gzip", "follow-redirect"], optional = true }
 
+# Feature: http-cache
+http-cache-semantics = { version = "3.0", optional = true }
+sha2 = { version = "0.10", optional = true }
+
 # Feature: http-cookies
 cookie_store = { version = "0.22", default-features = false, features = ["public_suffix", "serde_json"], optional = true }
 atomic-write-file = { version = "0.3", optional = true }
@@ -116,6 +120,10 @@ name = "http-cookies"
 required-features = ["http-cookies"]
 
 [[example]]
+name = "http-cache"
+required-features = ["http-cache"]
+
+[[example]]
 name = "plugin-cli"
 path = "examples/plugin-cli/main.rs"
 required-features = ["cli", "config", "logging", "dispatch"]
@@ -146,7 +154,8 @@ mcp = ["dep:rmcp", "dep:tokio"]
 lockfile = []
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio", "dep:serde_json", "dep:tower", "dep:tower-http"]
 http-cookies = ["http", "dep:cookie_store", "dep:atomic-write-file", "dep:url"]
-cache = ["dep:serde_json", "dep:directories", "dep:base64"]
+http-cache = ["http", "cache", "dep:http-cache-semantics", "dep:sha2"]
+cache = ["dep:serde_json", "dep:directories", "dep:base64", "dep:atomic-write-file"]
 update = ["http", "cache", "dep:serde_json"]
 dispatch = ["cli", "dep:which"]
 diagnostics = ["config", "logging", "dep:flate2", "dep:tar"]

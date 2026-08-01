@@ -11,7 +11,11 @@
 //
 //     cargo test --all-features -- --ignored
 
-use librebar::http::{HttpClient, HttpClientConfig, RetryPolicy};
+use hyper::header::{ETAG, LAST_MODIFIED};
+use librebar::http::{
+    ConditionalResponse, HeaderMap, HeaderValue, HttpClient, HttpClientConfig, ModificationCheck,
+    RetryPolicy, StatusCode, Validator, Version,
+};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::mpsc;
@@ -82,6 +86,190 @@ fn response(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     response
 }
 
+#[tokio::test]
+async fn response_preserves_version_repeated_headers_and_trailers() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        b"HTTP/1.1 200 OK\r\n\
+          Transfer-Encoding: chunked\r\n\
+          X-Trace: first\r\n\
+          X-Trace: second\r\n\
+          Trailer: X-Checksum\r\n\
+          Connection: close\r\n\r\n\
+          5\r\nhello\r\n\
+          0\r\nX-Checksum: complete\r\n\r\n"
+            .to_vec()
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let response = client
+        .get(&format!("http://{address}/metadata"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.version(), Version::HTTP_11);
+    assert_eq!(
+        response
+            .headers()
+            .get_all("x-trace")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert_eq!(response.header("x-trace").unwrap(), "first");
+    assert_eq!(response.trailers().unwrap()["x-checksum"], "complete");
+    assert_eq!(response.bytes(), b"hello");
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn validator_keeps_both_server_values() {
+    let mut headers = HeaderMap::new();
+    headers.insert(ETAG, HeaderValue::from_static("W/\"v7\""));
+    headers.insert(
+        LAST_MODIFIED,
+        HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT"),
+    );
+
+    let validator = Validator::from_headers(&headers).unwrap();
+
+    assert_eq!(validator.etag().unwrap(), "W/\"v7\"");
+    assert_eq!(
+        validator.last_modified().unwrap(),
+        "Wed, 21 Oct 2015 07:28:00 GMT"
+    );
+}
+
+#[tokio::test]
+async fn conditional_get_prefers_etag_and_maps_304() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        response("304 Not Modified", &[("ETag", "\"v1\"")], b"")
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let validator = Validator::from_etag(HeaderValue::from_static("\"v1\""));
+
+    let outcome = client
+        .get_if_modified(&format!("http://{address}/item"), &validator)
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, ConditionalResponse::NotModified(_)));
+    let request = requests.recv().unwrap().to_ascii_lowercase();
+    assert!(request.contains("if-none-match: \"v1\"\r\n"));
+    assert!(!request.contains("if-modified-since:"));
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn conditional_get_maps_success_to_modified() {
+    let (address, requests, server) = spawn_server(1, |_, _| response("200 OK", &[], b"new"));
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let validator = Validator::from_etag(HeaderValue::from_static("\"old\""));
+
+    let result = client
+        .get_if_modified(&format!("http://{address}/item"), &validator)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        result,
+        ConditionalResponse::Modified(response) if response.bytes() == b"new"
+    ));
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn conditional_get_maps_non_success_to_indeterminate() {
+    for (status, expected) in [
+        ("404 Not Found", StatusCode::NOT_FOUND),
+        (
+            "500 Internal Server Error",
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+    ] {
+        let (address, requests, server) =
+            spawn_server(1, move |_, _| response(status, &[], b"failed"));
+        let client = HttpClient::builder("librebar-test", "0.1.0")
+            .retry_policy(RetryPolicy::none())
+            .build()
+            .unwrap();
+        let validator = Validator::from_etag(HeaderValue::from_static("\"old\""));
+
+        let result = client
+            .get_if_modified(&format!("http://{address}/item"), &validator)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            result,
+            ConditionalResponse::Indeterminate(response) if response.status() == expected
+        ));
+        requests.recv().unwrap();
+        server.join().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn conditional_get_falls_back_to_last_modified() {
+    let (address, requests, server) =
+        spawn_server(1, |_, _| response("304 Not Modified", &[], b""));
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let validator =
+        Validator::from_last_modified(HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT"));
+
+    client
+        .get_if_modified(&format!("http://{address}/item"), &validator)
+        .await
+        .unwrap();
+
+    let request = requests.recv().unwrap().to_ascii_lowercase();
+    assert!(request.contains("if-modified-since: wed, 21 oct 2015 07:28:00 gmt\r\n"));
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn check_modified_uses_head_and_does_not_fallback_on_405() {
+    let (address, requests, server) =
+        spawn_server(1, |_, _| response("405 Method Not Allowed", &[], b""));
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let validator = Validator::from_etag(HeaderValue::from_static("\"v1\""));
+
+    let result = client
+        .check_modified(&format!("http://{address}/item"), &validator)
+        .await
+        .unwrap();
+
+    assert!(matches!(result, ModificationCheck::Indeterminate(_)));
+    assert!(requests.recv().unwrap().starts_with("HEAD /item "));
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn check_modified_maps_304_and_200_without_bodies() {
+    let (address, requests, server) = spawn_server(2, |index, _| {
+        if index == 0 {
+            response("304 Not Modified", &[("ETag", "\"v1\"")], b"")
+        } else {
+            response("200 OK", &[("ETag", "\"v2\"")], b"")
+        }
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let validator = Validator::from_etag(HeaderValue::from_static("\"v1\""));
+    let url = format!("http://{address}/item");
+
+    let unchanged = client.check_modified(&url, &validator).await.unwrap();
+    let changed = client.check_modified(&url, &validator).await.unwrap();
+
+    assert!(matches!(unchanged, ModificationCheck::NotModified(_)));
+    assert!(matches!(changed, ModificationCheck::Modified(_)));
+    assert!(requests.recv().unwrap().starts_with("HEAD /item "));
+    assert!(requests.recv().unwrap().starts_with("HEAD /item "));
+    server.join().unwrap();
+}
+
 #[test]
 fn client_config_defaults() {
     let cfg = HttpClientConfig::new("test-app", "0.1.0");
@@ -92,6 +280,25 @@ fn client_config_defaults() {
     assert_eq!(cfg.retry_policy.retries(), 3);
     assert!(!cfg.retry_policy.retries_all_methods());
     assert_eq!(cfg.max_response_size, 16 * 1024 * 1024);
+    #[cfg(feature = "http-cache")]
+    assert_eq!(
+        cfg.http_cache_stale_retention,
+        Duration::from_secs(7 * 24 * 60 * 60)
+    );
+}
+
+#[cfg(feature = "http-cache")]
+#[test]
+fn client_builder_configures_http_cache_retention() {
+    let client = HttpClient::builder("test-app", "0.1.0")
+        .http_cache_stale_retention(Duration::from_secs(90))
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        client.config().http_cache_stale_retention,
+        Duration::from_secs(90)
+    );
 }
 
 #[test]
@@ -197,7 +404,7 @@ async fn post_sends_method_body_and_default_user_agent() {
         .await
         .unwrap();
 
-    assert_eq!(response.status, 200);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.bytes(), b"ok");
     let request = request_rx.recv().unwrap();
     assert!(
@@ -229,7 +436,7 @@ async fn assert_follows_redirect(status: &'static str) {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     assert_eq!(result.bytes(), b"arrived");
     assert!(requests.recv().unwrap().starts_with("GET /start "));
     assert!(requests.recv().unwrap().starts_with("GET /final "));
@@ -267,7 +474,7 @@ async fn assert_post_redirect_semantics(
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     let initial = requests.recv().unwrap();
     assert!(initial.starts_with("POST /start "), "{initial}");
     assert!(initial.ends_with("\r\n\r\npayload"), "{initial}");
@@ -312,7 +519,7 @@ async fn zero_max_redirects_returns_redirect_response() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 302);
+    assert_eq!(result.status(), StatusCode::FOUND);
     assert_eq!(result.bytes(), b"redirect");
     requests.recv().unwrap();
     server.join().unwrap();
@@ -438,7 +645,7 @@ async fn retries_server_errors_for_idempotent_methods() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     assert_eq!(result.bytes(), b"recovered");
     for _ in 0..4 {
         assert!(requests.recv().unwrap().starts_with("GET /retry "));
@@ -458,7 +665,7 @@ async fn does_not_retry_client_errors() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 429);
+    assert_eq!(result.status(), StatusCode::TOO_MANY_REQUESTS);
     requests.recv().unwrap();
     server.join().unwrap();
 }
@@ -475,7 +682,7 @@ async fn does_not_retry_non_idempotent_methods_by_default() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 503);
+    assert_eq!(result.status(), StatusCode::SERVICE_UNAVAILABLE);
     requests.recv().unwrap();
     server.join().unwrap();
 }
@@ -499,7 +706,7 @@ async fn all_methods_policy_retries_post() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     for _ in 0..2 {
         let request = requests.recv().unwrap();
         assert!(request.starts_with("POST /create "), "{request}");
@@ -523,7 +730,7 @@ async fn retry_policy_none_disables_retries() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 503);
+    assert_eq!(result.status(), StatusCode::SERVICE_UNAVAILABLE);
     requests.recv().unwrap();
     server.join().unwrap();
 }
@@ -544,7 +751,7 @@ async fn retries_transport_errors() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     for _ in 0..4 {
         requests.recv().unwrap();
     }
@@ -567,7 +774,7 @@ async fn retries_connection_errors_while_reading_the_response_body() {
         .await
         .unwrap();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     assert_eq!(result.bytes(), b"recovered");
     for _ in 0..2 {
         requests.recv().unwrap();
@@ -619,7 +826,7 @@ async fn retries_use_exponential_backoff() {
         .unwrap();
     let elapsed = started.elapsed();
 
-    assert_eq!(result.status, 200);
+    assert_eq!(result.status(), StatusCode::OK);
     assert!(
         elapsed >= Duration::from_millis(140),
         "elapsed: {elapsed:?}"
@@ -638,7 +845,7 @@ async fn https_get_succeeds() {
         .get("https://api.github.com/zen")
         .await
         .expect("HTTPS GET should succeed");
-    assert!(resp.is_success(), "status: {}", resp.status);
+    assert!(resp.is_success(), "status: {}", resp.status());
     let body = resp.text().unwrap();
     assert!(
         !body.is_empty(),
@@ -654,5 +861,5 @@ async fn http_get_succeeds() {
         .get("http://httpbin.org/get")
         .await
         .expect("HTTP GET should succeed");
-    assert!(resp.is_success(), "status: {}", resp.status);
+    assert!(resp.is_success(), "status: {}", resp.status());
 }
