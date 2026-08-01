@@ -5,6 +5,7 @@
 //! - HTTP/2 with HTTP/1.1 fallback
 //! - Configurable user-agent and timeout
 //! - `#[tracing::instrument]` on every request
+//! - GET, POST, PUT, PATCH, DELETE, and arbitrary [`Request`] support
 //! - Simple [`Response`] type with status and body bytes
 //!
 //! # Example
@@ -21,15 +22,35 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! Custom headers use the standard HTTP request builder:
+//!
+//! ```no_run
+//! use librebar::http::{Bytes, HttpClient, Method, Request};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = HttpClient::from_app("my-app", "1.0.0")?;
+//! let request = Request::builder()
+//!     .method(Method::POST)
+//!     .uri("https://example.com/widgets")
+//!     .header("content-type", "application/json")
+//!     .body(Bytes::from_static(br#"{"name":"gizmo"}"#))?;
+//! let response = client.send(request).await?;
+//! # let _ = response;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::time::Duration;
 
-use http_body_util::{BodyExt, Empty};
-use hyper::body::Bytes;
+use http_body_util::{BodyExt, Full};
 use hyper_util::rt::TokioExecutor;
 
 use crate::Result;
 use crate::error::HttpError;
+
+pub use hyper::body::Bytes;
+pub use hyper::{Method, Request};
 
 // ─── Config ─────────────────────────────────────────────────────────
 
@@ -78,7 +99,7 @@ type HttpsConnector =
 /// HTTP/2 with HTTP/1.1 fallback. Connection pooling handled
 /// automatically.
 pub struct HttpClient {
-    inner: hyper_util::client::legacy::Client<HttpsConnector, Empty<Bytes>>,
+    inner: hyper_util::client::legacy::Client<HttpsConnector, Full<Bytes>>,
     config: HttpClientConfig,
 }
 
@@ -109,19 +130,75 @@ impl HttpClient {
     ///
     /// - [`Error::Http`] — invalid URL, connection failure, TLS error,
     ///   timeout, or I/O error while reading the response body.
-    #[tracing::instrument(skip(self), fields(url = %url))]
     pub async fn get(&self, url: &str) -> Result<Response> {
-        let uri: hyper::Uri = url.parse().map_err(HttpError::InvalidUrl)?;
+        self.request(Method::GET, url, []).await
+    }
 
+    /// Perform a POST request with a byte body.
+    pub async fn post(&self, url: &str, body: impl AsRef<[u8]>) -> Result<Response> {
+        self.request(Method::POST, url, body).await
+    }
+
+    /// Perform a PUT request with a byte body.
+    pub async fn put(&self, url: &str, body: impl AsRef<[u8]>) -> Result<Response> {
+        self.request(Method::PUT, url, body).await
+    }
+
+    /// Perform a PATCH request with a byte body.
+    pub async fn patch(&self, url: &str, body: impl AsRef<[u8]>) -> Result<Response> {
+        self.request(Method::PATCH, url, body).await
+    }
+
+    /// Perform a DELETE request with an empty body.
+    pub async fn delete(&self, url: &str) -> Result<Response> {
+        self.request(Method::DELETE, url, []).await
+    }
+
+    /// Perform an HTTP request with a byte body.
+    ///
+    /// Use [`send`](Self::send) when custom headers are required.
+    pub async fn request(
+        &self,
+        method: Method,
+        url: &str,
+        body: impl AsRef<[u8]>,
+    ) -> Result<Response> {
+        let uri: hyper::Uri = url.parse().map_err(HttpError::InvalidUrl)?;
         let req = hyper::Request::builder()
-            .method(hyper::Method::GET)
+            .method(method)
             .uri(&uri)
-            .header(hyper::header::USER_AGENT, &self.config.user_agent)
-            .body(Empty::<Bytes>::new())
+            .body(Bytes::copy_from_slice(body.as_ref()))
             .map_err(HttpError::RequestBuild)?;
 
+        self.send(req).await
+    }
+
+    /// Send a pre-built HTTP request.
+    ///
+    /// This is the escape hatch for custom headers. The configured user-agent
+    /// is inserted when the request does not already contain one.
+    #[tracing::instrument(
+        skip(self, request),
+        fields(method = %request.method(), url = %request.uri())
+    )]
+    pub async fn send(&self, mut request: Request<Bytes>) -> Result<Response> {
+        if !request.headers().contains_key(hyper::header::USER_AGENT) {
+            let user_agent = hyper::header::HeaderValue::from_str(&self.config.user_agent)
+                .map_err(HttpError::InvalidHeaderValue)?;
+            request
+                .headers_mut()
+                .insert(hyper::header::USER_AGENT, user_agent);
+        }
+
+        let (parts, body) = request.into_parts();
+        let request = Request::from_parts(parts, Full::new(body));
+
         let whole_request = async {
-            let resp = self.inner.request(req).await.map_err(HttpError::Request)?;
+            let resp = self
+                .inner
+                .request(request)
+                .await
+                .map_err(HttpError::Request)?;
 
             let status = resp.status().as_u16();
             tracing::debug!(status, "response received");
@@ -157,7 +234,7 @@ impl HttpClient {
 
 // ─── Response ───────────────────────────────────────────────────────
 
-/// HTTP response returned by [`HttpClient::get`].
+/// HTTP response returned by [`HttpClient`].
 #[derive(Debug)]
 pub struct Response {
     /// HTTP status code.

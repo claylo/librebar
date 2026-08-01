@@ -8,7 +8,7 @@
 //! side effect these flags imply, in the order they have to happen in, and
 //! reports whether the process should keep going.
 
-use clap::Parser;
+use clap::Args;
 use std::path::PathBuf;
 
 /// Color output preference.
@@ -70,7 +70,7 @@ impl ColorChoice {
 /// `#[command(about = None, long_about = None)]` keeps clap from adopting it:
 /// a flattened struct's doc comment otherwise becomes the *consuming* binary's
 /// help description, so `myapp --help` would open by explaining librebar.
-#[derive(Parser, Debug)]
+#[derive(Args, Clone, Debug)]
 #[command(about = None, long_about = None)]
 pub struct CommonArgs {
     /// Print only the version number (for scripting).

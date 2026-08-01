@@ -164,9 +164,12 @@ impl Cache {
     }
 
     fn key_path(&self, key: &str) -> PathBuf {
-        // Sanitize key for filesystem safety
-        let safe_key = key.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
-        self.dir.join(format!("{safe_key}.json"))
+        // URL-safe base64 is filesystem-safe and preserves the complete key,
+        // unlike lossy character replacement where `foo/bar` and `foo:bar`
+        // collapse to the same filename. The version prefix leaves room for a
+        // future encoding change without mistaking old files for new ones.
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes());
+        self.dir.join(format!("v1-{encoded}.json"))
     }
 }
 

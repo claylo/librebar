@@ -17,6 +17,30 @@ fn store_and_retrieve() {
 }
 
 #[test]
+fn structured_keys_do_not_collide() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    let ttl = Duration::from_secs(60);
+
+    cache.set("foo/bar", b"slash", ttl).unwrap();
+    cache.set("foo:bar", b"colon", ttl).unwrap();
+    cache.set("foo.bar", b"dot", ttl).unwrap();
+
+    assert_eq!(
+        cache.get("foo/bar").unwrap().as_deref(),
+        Some(b"slash".as_ref())
+    );
+    assert_eq!(
+        cache.get("foo:bar").unwrap().as_deref(),
+        Some(b"colon".as_ref())
+    );
+    assert_eq!(
+        cache.get("foo.bar").unwrap().as_deref(),
+        Some(b"dot".as_ref())
+    );
+}
+
+#[test]
 fn missing_key_returns_none() {
     let tmp = TempDir::new().unwrap();
     let cache = Cache::new(tmp.path());

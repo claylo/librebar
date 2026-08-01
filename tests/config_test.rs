@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "config")]
 
+use std::ffi::OsString;
 use std::fs;
 
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,278 @@ struct TestConfig {
     custom_field: Option<String>,
 }
 
+#[derive(Debug)]
+struct FixedEnvironment(Vec<(OsString, OsString)>);
+
+impl FixedEnvironment {
+    fn new(values: &[(&str, &str)]) -> Self {
+        Self(
+            values
+                .iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+                .collect(),
+        )
+    }
+}
+
+impl librebar::config::EnvironmentSource for FixedEnvironment {
+    fn vars(&self) -> Vec<(OsString, OsString)> {
+        self.0.clone()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+struct EnvironmentConfig {
+    database_url: String,
+    database: DatabaseConfig,
+    enabled: bool,
+    port: u16,
+    ratio: f64,
+    tags: Vec<String>,
+    metadata: serde_json::Value,
+    level: librebar::config::LogLevel,
+    build_id: Option<String>,
+    optional_port: Option<u16>,
+}
+
+impl Default for EnvironmentConfig {
+    fn default() -> Self {
+        Self {
+            database_url: String::new(),
+            database: DatabaseConfig::default(),
+            enabled: false,
+            port: 8080,
+            ratio: 1.0,
+            tags: Vec::new(),
+            metadata: serde_json::json!({}),
+            level: librebar::config::LogLevel::Info,
+            build_id: None,
+            optional_port: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+struct DatabaseConfig {
+    url: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct StrictEnvironmentConfig {
+    known: String,
+}
+
+fn loader_with(values: &[(&str, &str)]) -> librebar::config::ConfigLoader {
+    librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .without_boundary_marker()
+        .with_environment_source(FixedEnvironment::new(values))
+}
+
+#[test]
+fn environment_uses_normalized_prefix_and_preserves_single_underscores() {
+    let (config, sources): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(FixedEnvironment::new(&[(
+            "MY_APP_DATABASE_URL",
+            "postgres://flat",
+        )]))
+        .load()
+        .unwrap();
+
+    assert_eq!(config.database_url, "postgres://flat");
+    assert_eq!(
+        sources.environment_variables,
+        ["MY_APP_DATABASE_URL".to_string()]
+    );
+}
+
+#[test]
+fn environment_double_underscore_addresses_nested_fields() {
+    let (config, _): (EnvironmentConfig, _) =
+        loader_with(&[("MY_APP_DATABASE__URL", "postgres://nested")])
+            .load()
+            .unwrap();
+
+    assert_eq!(config.database.url, "postgres://nested");
+}
+
+#[test]
+fn environment_parses_values_from_lower_layer_schema() {
+    let source = FixedEnvironment::new(&[
+        ("MY_APP_ENABLED", "true"),
+        ("MY_APP_PORT", "9090"),
+        ("MY_APP_RATIO", "1.25"),
+        ("MY_APP_TAGS", r#"["worker","blue"]"#),
+        ("MY_APP_METADATA", r#"{"region":"iad"}"#),
+        ("MY_APP_LEVEL", "trace"),
+    ]);
+
+    let (config, _): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(source)
+        .load()
+        .unwrap();
+
+    assert!(config.enabled);
+    assert_eq!(config.port, 9090);
+    assert_eq!(config.ratio, 1.25);
+    assert_eq!(config.tags, ["worker", "blue"]);
+    assert_eq!(config.metadata["region"], "iad");
+    assert_eq!(config.level, librebar::config::LogLevel::Trace);
+}
+
+#[test]
+fn environment_booleans_accept_only_lowercase_true_and_false() {
+    for accepted in ["true", "false"] {
+        loader_with(&[("MY_APP_ENABLED", accepted)])
+            .load::<EnvironmentConfig>()
+            .unwrap();
+    }
+
+    for rejected in ["1", "0", "yes", "no", "TRUE", "FALSE"] {
+        let err = loader_with(&[("MY_APP_ENABLED", rejected)])
+            .load::<EnvironmentConfig>()
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("MY_APP_ENABLED"), "{message}");
+        assert!(message.contains("true` or `false"), "{message}");
+    }
+}
+
+#[test]
+fn empty_environment_string_is_a_value() {
+    let (config, _): (EnvironmentConfig, _) =
+        loader_with(&[("MY_APP_BUILD_ID", "")]).load().unwrap();
+    assert_eq!(config.build_id.as_deref(), Some(""));
+}
+
+#[test]
+fn empty_non_string_environment_value_is_a_parse_error() {
+    let err = loader_with(&[("MY_APP_PORT", "")])
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("MY_APP_PORT"), "{message}");
+    assert!(message.contains("integer"), "{message}");
+}
+
+#[test]
+fn null_schema_values_remain_strings() {
+    let (config, _): (EnvironmentConfig, _) =
+        loader_with(&[("MY_APP_BUILD_ID", "00123")]).load().unwrap();
+    assert_eq!(config.build_id.as_deref(), Some("00123"));
+}
+
+#[test]
+fn a_discovered_file_value_supplies_schema_for_an_optional_number() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join(".my-app.toml");
+    fs::write(&file, "optional_port = 7000\n").unwrap();
+    let project = camino::Utf8PathBuf::try_from(tmp.path().to_path_buf()).unwrap();
+
+    let (config, _): (EnvironmentConfig, _) = loader_with(&[("MY_APP_OPTIONAL_PORT", "8000")])
+        .without_boundary_marker()
+        .with_project_search(project)
+        .load()
+        .unwrap();
+
+    assert_eq!(config.optional_port, Some(8000));
+}
+
+#[test]
+fn unknown_prefixed_variables_are_ignored_by_default() {
+    let (config, sources): (EnvironmentConfig, _) =
+        loader_with(&[("MY_APP_TYPO_FIELD", "ignored")])
+            .load()
+            .unwrap();
+    assert_eq!(config, EnvironmentConfig::default());
+    assert!(sources.environment_variables.is_empty());
+}
+
+#[test]
+fn unknown_prefixed_variables_can_be_collected() {
+    let err = loader_with(&[("MY_APP_TYPO_FIELD", "collected")])
+        .with_unknown_environment(librebar::config::UnknownEnvironment::Collect)
+        .load::<StrictEnvironmentConfig>()
+        .unwrap_err();
+    assert!(matches!(err, librebar::Error::ConfigDeserialize(_)));
+}
+
+#[cfg(unix)]
+#[test]
+fn ignored_unknown_values_are_not_decoded_but_known_values_are() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let ignored = FixedEnvironment(vec![(
+        OsString::from("MY_APP_TYPO_FIELD"),
+        OsString::from_vec(vec![0xff]),
+    )]);
+    librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(ignored)
+        .load::<EnvironmentConfig>()
+        .unwrap();
+
+    let known = FixedEnvironment(vec![(
+        OsString::from("MY_APP_DATABASE_URL"),
+        OsString::from_vec(vec![0xff]),
+    )]);
+    let err = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(known)
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("MY_APP_DATABASE_URL"), "{message}");
+    assert!(message.contains("UTF-8"), "{message}");
+}
+
+#[test]
+fn duplicate_environment_paths_are_rejected() {
+    let err = loader_with(&[
+        ("MY_APP_DATABASE_URL", "postgres://one"),
+        ("MY_APP_DATABASE_URL", "postgres://two"),
+    ])
+    .load::<EnvironmentConfig>()
+    .unwrap_err();
+    assert!(matches!(err, librebar::Error::ConfigEnvironment { .. }));
+}
+
+#[test]
+fn parent_child_environment_conflicts_are_rejected() {
+    let err = loader_with(&[
+        ("MY_APP_DATABASE", r#"{"url":"postgres://whole"}"#),
+        ("MY_APP_DATABASE__URL", "postgres://child"),
+    ])
+    .load::<EnvironmentConfig>()
+    .unwrap_err();
+    assert!(matches!(err, librebar::Error::ConfigEnvironment { .. }));
+}
+
+#[test]
+fn empty_environment_path_segments_are_rejected() {
+    let err = loader_with(&[("MY_APP_DATABASE____URL", "postgres://bad")])
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+    assert!(matches!(err, librebar::Error::ConfigEnvironment { .. }));
+}
+
+#[test]
+fn over_deep_environment_paths_are_rejected() {
+    let variable = format!("MY_APP_{}", vec!["NESTED"; 65].join("__"));
+    let source = FixedEnvironment(vec![(OsString::from(variable), OsString::from("value"))]);
+    let err = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(source)
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+    assert!(matches!(err, librebar::Error::ConfigEnvironment { .. }));
+}
+
 #[test]
 fn merge_and_deserialize() {
     let base = r#"log_level = "info""#;
@@ -162,12 +435,20 @@ fn log_level_as_str() {
     assert_eq!(librebar::config::LogLevel::Error.as_str(), "error");
 }
 
+#[test]
+fn log_level_trace_round_trips() {
+    let level: librebar::config::LogLevel = serde_json::from_str(r#""trace""#).unwrap();
+    assert_eq!(level, librebar::config::LogLevel::Trace);
+    assert_eq!(level.as_str(), "trace");
+}
+
 // ─── ConfigLoader discovery tests ───────────────────────────────────
 
 #[test]
 fn loader_defaults_when_no_files() {
     let loader = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .without_boundary_marker();
 
     let (config, sources): (TestConfig, _) = loader.load().unwrap();
@@ -184,6 +465,7 @@ fn loader_explicit_file_overrides_default() {
 
     let (config, sources): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .with_file(&config_path)
         .load()
         .unwrap();
@@ -205,6 +487,7 @@ fn loader_later_file_overrides_earlier() {
 
     let (config, _): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .with_file(&base)
         .with_file(&over)
         .load()
@@ -226,6 +509,7 @@ fn loader_discovers_dotfile() {
 
     let (config, sources): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .without_boundary_marker()
         .with_project_search(&sub_dir)
         .load()
@@ -253,6 +537,7 @@ fn loader_dotconfig_dir_takes_precedence() {
 
     let (config, sources): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .without_boundary_marker()
         .with_project_search(&project_dir)
         .load()
@@ -278,6 +563,7 @@ fn loader_boundary_marker_stops_search() {
 
     let (config, sources): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .with_boundary_marker(".git")
         .with_project_search(&work)
         .load()
@@ -292,9 +578,111 @@ fn loader_load_or_error_fails_when_no_config() {
     let result = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
         .without_boundary_marker()
+        .without_environment()
         .load_or_error::<TestConfig>();
 
     assert!(matches!(result, Err(librebar::Error::ConfigNotFound)));
+}
+
+#[test]
+fn load_or_error_accepts_environment_as_a_configuration_source() {
+    let (config, sources): (EnvironmentConfig, _) =
+        loader_with(&[("MY_APP_DATABASE_URL", "postgres://environment")])
+            .load_or_error()
+            .unwrap();
+
+    assert_eq!(config.database_url, "postgres://environment");
+    assert_eq!(
+        sources.environment_variables,
+        ["MY_APP_DATABASE_URL".to_string()]
+    );
+}
+
+#[test]
+fn explicit_file_overrides_environment() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("config.toml");
+    fs::write(&file, "port = 7000\n").unwrap();
+    let file = camino::Utf8PathBuf::try_from(file).unwrap();
+
+    let (config, sources): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_file(file)
+        .with_environment_source(FixedEnvironment::new(&[("MY_APP_PORT", "8000")]))
+        .load()
+        .unwrap();
+
+    assert_eq!(config.port, 7000);
+    assert_eq!(sources.environment_variables, ["MY_APP_PORT".to_string()]);
+}
+
+#[test]
+fn programmatic_override_beats_explicit_file() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("config.toml");
+    fs::write(&file, "port = 7000\n").unwrap();
+    let file = camino::Utf8PathBuf::try_from(file).unwrap();
+
+    let (config, sources): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_file(file)
+        .with_environment_source(FixedEnvironment::new(&[("MY_APP_PORT", "8000")]))
+        .with_override("port", 9000_u16)
+        .load()
+        .unwrap();
+
+    assert_eq!(config.port, 9000);
+    assert_eq!(sources.override_paths, ["port".to_string()]);
+}
+
+#[test]
+fn load_or_error_accepts_programmatic_override_as_a_source() {
+    let (config, sources): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(FixedEnvironment::new(&[]))
+        .with_override("port", 9000_u16)
+        .load_or_error()
+        .unwrap();
+
+    assert_eq!(config.port, 9000);
+    assert_eq!(sources.override_paths, ["port".to_string()]);
+}
+
+struct FailingSerialize;
+
+impl Serialize for FailingSerialize {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        Err(serde::ser::Error::custom("nope"))
+    }
+}
+
+#[test]
+fn programmatic_override_reports_serialization_error_without_a_value() {
+    let err = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(FixedEnvironment::new(&[]))
+        .with_override("secret", FailingSerialize)
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("secret"), "{message}");
+    assert!(!message.contains("MY_SECRET_VALUE"), "{message}");
+}
+
+#[test]
+fn invalid_programmatic_override_paths_are_rejected() {
+    for path in ["database..url".to_string(), vec!["nested"; 65].join(".")] {
+        let err = librebar::config::ConfigLoader::new("my-app")
+            .with_user_config(false)
+            .with_environment_source(FixedEnvironment::new(&[]))
+            .with_override(path.clone(), "value")
+            .load::<EnvironmentConfig>()
+            .unwrap_err();
+        assert!(err.to_string().contains(&path), "{err}");
+    }
 }
 
 #[test]
@@ -306,6 +694,7 @@ fn loader_yaml_file() {
 
     let (config, _): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
+        .without_environment()
         .with_file(&config_path)
         .load()
         .unwrap();

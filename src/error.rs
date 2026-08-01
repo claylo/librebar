@@ -30,6 +30,26 @@ pub enum Error {
     #[error("config nesting exceeds maximum merge depth")]
     ConfigMergeDepth,
 
+    /// Environment configuration could not be applied.
+    #[cfg(feature = "config")]
+    #[error("invalid environment configuration from {variable}: {reason}")]
+    ConfigEnvironment {
+        /// Variable that failed validation or parsing.
+        variable: String,
+        /// Safe diagnostic that never includes the variable's value.
+        reason: String,
+    },
+
+    /// A programmatic configuration override is invalid.
+    #[cfg(feature = "config")]
+    #[error("invalid configuration override {path}: {reason}")]
+    ConfigOverride {
+        /// Dotted configuration path.
+        path: String,
+        /// Serialization or path error.
+        reason: String,
+    },
+
     /// No configuration file found (when one was required).
     #[cfg(feature = "config")]
     #[error("no configuration file found")]
@@ -109,6 +129,9 @@ pub enum HttpError {
     /// HTTP request could not be constructed.
     #[error("request build: {0}")]
     RequestBuild(#[from] hyper::http::Error),
+    /// HTTP header value is invalid.
+    #[error("invalid header value: {0}")]
+    InvalidHeaderValue(#[from] hyper::header::InvalidHeaderValue),
     /// Connection or protocol error during request.
     #[error("request: {0}")]
     Request(#[from] hyper_util::client::legacy::Error),

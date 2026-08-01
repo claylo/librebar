@@ -61,7 +61,7 @@ Add librebar to your `Cargo.toml` with the features you need:
 
 ```toml
 [dependencies]
-librebar = { version = "0.2", features = ["cli", "config", "logging"] }
+librebar = { version = "0.3", features = ["cli", "config", "logging"] }
 ```
 
 No default features. You opt into exactly what you need.
@@ -214,13 +214,57 @@ Supported extensions: `.toml`, `.yaml`, `.yml`, `.json`. Walking stops at a `.gi
 
 ### Layered merge
 
-When multiple config files are found, values merge with later files winning. Objects merge recursively. Scalars and arrays replace entirely. Your struct's `#[serde(default)]` values serve as the base layer.
+Values merge with later layers winning. Objects merge recursively. Scalars and
+arrays replace entirely. Your struct's `#[serde(default)]` values serve as the
+base layer.
 
 ```
 defaults from Config::default()
   ← ~/.config/myapp/config.toml      (user config)
     ← ./myapp.toml                    (project config)
-      ← explicit file via --config    (highest precedence)
+      ← MYAPP_*                       (environment)
+        ← explicit file via --config
+          ← typed CLI overrides       (highest precedence)
+```
+
+Environment variables override passively discovered files. An explicit
+`--config foo.toml` is a deliberate choice, so that file overrides the
+environment. Application-specific CLI flags remain the final word.
+
+### Environment variables
+
+The application name becomes an uppercase prefix: `my-app` uses `MY_APP_`.
+Single underscores remain part of a field name; `__` crosses a nested struct
+boundary.
+
+```bash
+MY_APP_DATABASE_URL='postgres://localhost/app'
+MY_APP_DATABASE__POOL_SIZE=16
+MY_APP_FEATURE_ENABLED=true
+MY_APP_TAGS='["worker", "blue"]'
+```
+
+Values are parsed against the current default/discovered-file value. Strings
+stay strings, numbers stay numeric, and arrays/objects use JSON syntax.
+Booleans accept only lowercase `true` and `false`; `1`, `yes`, and `TRUE` are
+errors. Quote JSON arrays and objects so the shell passes them intact.
+
+An empty value is still a value: string fields receive `""`, while numeric,
+boolean, array, and object fields report a parse error. A null schema position,
+including `Option<T>` with a `None` default, is treated as a string because the
+serialized schema cannot reveal `T`. A discovered file can provide a non-null
+schema value for an optional non-string field.
+
+Unknown prefixed paths are ignored by default. Dynamic-map consumers can opt
+in to collecting them as strings:
+
+```rust
+use librebar::config::{ConfigLoader, UnknownEnvironment};
+
+let (config, sources) = ConfigLoader::new("my-app")
+    .with_unknown_environment(UnknownEnvironment::Collect)
+    .load::<Config>()?;
+let _ = (config, sources);
 ```
 
 ### Explicit files
@@ -230,8 +274,12 @@ Load from a specific path instead of discovery:
 ```rust
 let app = librebar::init("myapp")
     .config_from_file::<Config>(&config_path)
+    .with_config_override("database.pool_size", cli.pool_size)
     .start()?;
 ```
+
+Only add overrides for CLI flags the user actually supplied. Typed overrides
+are applied in call order and beat every file and environment variable.
 
 ### Escape hatch
 
@@ -435,7 +483,7 @@ one-line "using it for X" — not a gate for 1.0, just an invitation.
 External consumers surface ergonomic issues that self-dogfooding can't,
 and earlier signal makes for a better 1.0.
 
-Until then, pin to a specific minor version (`librebar = "0.1"`) if you
+Until then, pin to a specific minor version (`librebar = "0.3"`) if you
 want the patch-only guarantee.
 
 ## License

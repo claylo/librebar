@@ -19,6 +19,16 @@ enum TestCommands {
     Info,
 }
 
+const fn assert_args<T: clap::Args>() {}
+
+#[test]
+fn common_args_is_cloneable_flattened_args() {
+    assert_args::<librebar::cli::CommonArgs>();
+    let cli = TestCli::parse_from(["test-app", "info"]);
+    let copy = cli.common.clone();
+    assert_eq!(copy.verbose, cli.common.verbose);
+}
+
 #[test]
 fn common_args_defaults() {
     let cli = TestCli::parse_from(["test-app", "info"]);

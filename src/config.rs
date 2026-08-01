@@ -15,7 +15,9 @@
 //! 2. User config — `~/.config/{app}/config.{ext}` (XDG on macOS/Linux)
 //! 3. Project config — found by walking up from cwd (`.config/{app}.ext`,
 //!    `.{app}.ext`, `{app}.ext`)
-//! 4. Explicit files — passed via [`ConfigLoader::with_file()`]
+//! 4. Environment variables — `{APP}_{FIELD}`, with `__` for nesting
+//! 5. Explicit files — passed via [`ConfigLoader::with_file()`]
+//! 6. Programmatic overrides — passed via [`ConfigLoader::with_override()`]
 //!
 //! All layers are parsed into `serde_json::Value` and deep-merged
 //! (objects merge recursively, scalars/arrays replace). The merged
@@ -38,6 +40,9 @@ use serde_json::Value;
 
 use crate::error::{Error, Result};
 
+mod environment;
+pub use environment::{EnvironmentSource, ProcessEnvironment, UnknownEnvironment};
+
 /// Supported configuration file extensions (in order of preference).
 const CONFIG_EXTENSIONS: &[&str] = &["toml", "yaml", "yml", "json"];
 
@@ -47,6 +52,8 @@ const CONFIG_EXTENSIONS: &[&str] = &["toml", "yaml", "yml", "json"];
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
+    /// Maximum diagnostic detail.
+    Trace,
     /// Verbose output for debugging and development.
     Debug,
     /// Standard operational information (default).
@@ -62,6 +69,7 @@ impl LogLevel {
     /// Returns the log level as a lowercase string slice.
     pub const fn as_str(&self) -> &'static str {
         match self {
+            Self::Trace => "trace",
             Self::Debug => "debug",
             Self::Info => "info",
             Self::Warn => "warn",
@@ -87,6 +95,12 @@ pub struct ConfigSources {
     /// Explicit config files loaded (e.g., from `--config` flag).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub explicit_files: Vec<Utf8PathBuf>,
+    /// Applied environment variable names. Values are never recorded.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub environment_variables: Vec<String>,
+    /// Applied programmatic override paths.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub override_paths: Vec<String>,
 }
 
 impl ConfigSources {
@@ -99,6 +113,33 @@ impl ConfigSources {
             .map(Utf8PathBuf::as_path)
             .or(self.project_file.as_deref())
             .or(self.user_file.as_deref())
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.project_file.is_none()
+            && self.user_file.is_none()
+            && self.explicit_files.is_empty()
+            && self.environment_variables.is_empty()
+            && self.override_paths.is_empty()
+    }
+}
+
+/// A serialized programmatic configuration override.
+#[derive(Debug)]
+pub(crate) struct ConfigOverride {
+    path: String,
+    value: std::result::Result<Value, serde_json::Error>,
+}
+
+impl ConfigOverride {
+    pub(crate) fn new<V>(path: String, value: V) -> Self
+    where
+        V: Serialize,
+    {
+        Self {
+            path,
+            value: serde_json::to_value(value),
+        }
     }
 }
 
@@ -209,13 +250,22 @@ pub fn parse_file(path: &Utf8Path) -> Result<Value> {
 /// Discovers config files by walking up directories, loads user config
 /// from XDG directories, merges all sources, and deserializes into the
 /// consumer's config type.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ConfigLoader {
     app_name: String,
     project_search_root: Option<Utf8PathBuf>,
     include_user_config: bool,
     boundary_marker: Option<String>,
     explicit_files: Vec<Utf8PathBuf>,
+    environment_source: Option<std::sync::Arc<dyn EnvironmentSource>>,
+    unknown_environment: UnknownEnvironment,
+    overrides: Vec<ConfigOverride>,
+}
+
+impl Default for ConfigLoader {
+    fn default() -> Self {
+        Self::new("")
+    }
 }
 
 impl ConfigLoader {
@@ -229,6 +279,9 @@ impl ConfigLoader {
             include_user_config: true,
             boundary_marker: Some(".git".to_string()),
             explicit_files: Vec::new(),
+            environment_source: Some(std::sync::Arc::new(ProcessEnvironment)),
+            unknown_environment: UnknownEnvironment::Ignore,
+            overrides: Vec::new(),
         }
     }
 
@@ -256,9 +309,47 @@ impl ConfigLoader {
         self
     }
 
-    /// Add an explicit config file to load (highest precedence).
+    /// Add an explicit config file to load.
+    ///
+    /// Explicit files override discovered files and environment variables.
+    /// Programmatic overrides still take final precedence.
     pub fn with_file<P: AsRef<Utf8Path>>(mut self, path: P) -> Self {
         self.explicit_files.push(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Replace the process environment with a custom source.
+    pub fn with_environment_source<E>(mut self, source: E) -> Self
+    where
+        E: EnvironmentSource + 'static,
+    {
+        self.environment_source = Some(std::sync::Arc::new(source));
+        self
+    }
+
+    /// Disable environment configuration.
+    pub fn without_environment(mut self) -> Self {
+        self.environment_source = None;
+        self
+    }
+
+    /// Configure handling for prefixed variables with unknown paths.
+    pub const fn with_unknown_environment(mut self, policy: UnknownEnvironment) -> Self {
+        self.unknown_environment = policy;
+        self
+    }
+
+    /// Add a typed programmatic override at a dotted configuration path.
+    pub fn with_override<V>(mut self, path: impl Into<String>, value: V) -> Self
+    where
+        V: Serialize,
+    {
+        self.overrides.push(ConfigOverride::new(path.into(), value));
+        self
+    }
+
+    pub(crate) fn with_serialized_override(mut self, value: ConfigOverride) -> Self {
+        self.overrides.push(value);
         self
     }
 
@@ -274,6 +365,13 @@ impl ConfigLoader {
     #[tracing::instrument(skip(self), fields(app = %self.app_name, search_root = ?self.project_search_root))]
     pub fn load<C: serde::de::DeserializeOwned + Default + Serialize>(
         self,
+    ) -> Result<(C, ConfigSources)> {
+        self.load_inner(false)
+    }
+
+    fn load_inner<C: serde::de::DeserializeOwned + Default + Serialize>(
+        self,
+        require_source: bool,
     ) -> Result<(C, ConfigSources)> {
         tracing::debug!("loading configuration");
         let mut merged = serde_json::to_value(C::default()).map_err(Error::ConfigDeserialize)?;
@@ -299,7 +397,17 @@ impl ConfigLoader {
             sources.project_file = Some(project_config);
         }
 
-        // Explicit files (highest precedence)
+        // Environment overrides discovered config, but not an explicitly
+        // selected file.
+        if let Some(source) = self.environment_source.as_deref() {
+            let (overlay, variables) =
+                environment::overlay(&self.app_name, &merged, source, self.unknown_environment)?;
+            deep_merge(&mut merged, overlay)?;
+            sources.environment_variables = variables;
+        }
+
+        // Explicit files represent deliberate user selection and override
+        // both discovered config and environment variables.
         for file in &self.explicit_files {
             tracing::debug!(path = %file, "loading explicit config");
             let value = parse_file(file)?;
@@ -307,40 +415,27 @@ impl ConfigLoader {
         }
         sources.explicit_files = self.explicit_files;
 
+        sources.override_paths = apply_config_overrides(&mut merged, self.overrides)?;
+
+        if require_source && sources.is_empty() {
+            return Err(Error::ConfigNotFound);
+        }
+
         let config: C = serde_json::from_value(merged).map_err(Error::ConfigDeserialize)?;
         tracing::info!("configuration loaded");
         Ok((config, sources))
     }
 
-    /// Load configuration, returning an error if no config file is found.
+    /// Load configuration, returning an error if no source is found.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ConfigNotFound`] if no config files exist.
+    /// Returns [`Error::ConfigNotFound`] if no files, environment variables,
+    /// or programmatic overrides supply configuration.
     pub fn load_or_error<C: serde::de::DeserializeOwned + Default + Serialize>(
-        &self,
+        self,
     ) -> Result<(C, ConfigSources)> {
-        let has_user = self.include_user_config && self.find_user_config().is_some();
-        let has_project = self
-            .project_search_root
-            .as_ref()
-            .and_then(|root| self.find_project_config(root))
-            .is_some();
-        let has_explicit = !self.explicit_files.is_empty();
-
-        if !has_user && !has_project && !has_explicit {
-            return Err(Error::ConfigNotFound);
-        }
-
-        // Clone self's fields to create a new loader for the actual load
-        Self {
-            app_name: self.app_name.clone(),
-            project_search_root: self.project_search_root.clone(),
-            include_user_config: self.include_user_config,
-            boundary_marker: self.boundary_marker.clone(),
-            explicit_files: self.explicit_files.clone(),
-        }
-        .load()
+        self.load_inner(true)
     }
 
     /// Find project config by walking up from the given directory.
@@ -396,6 +491,67 @@ impl ConfigLoader {
 
         None
     }
+}
+
+pub(crate) fn apply_config_overrides(
+    merged: &mut Value,
+    overrides: Vec<ConfigOverride>,
+) -> Result<Vec<String>> {
+    let mut paths = Vec::with_capacity(overrides.len());
+    for config_override in overrides {
+        let ConfigOverride { path, value } = config_override;
+        let value = value.map_err(|error| Error::ConfigOverride {
+            path: path.clone(),
+            reason: error.to_string(),
+        })?;
+        let segments = override_path(&path)?;
+        set_path(merged, &segments, value);
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
+fn override_path(path: &str) -> Result<Vec<&str>> {
+    let segments: Vec<&str> = path.split('.').collect();
+    if segments.is_empty() || segments.iter().any(|segment| segment.is_empty()) {
+        return Err(Error::ConfigOverride {
+            path: path.to_string(),
+            reason: "override path contains an empty segment".to_string(),
+        });
+    }
+    if segments.len() > 64 {
+        return Err(Error::ConfigOverride {
+            path: path.to_string(),
+            reason: "override path exceeds 64 levels".to_string(),
+        });
+    }
+    Ok(segments)
+}
+
+fn set_path(target: &mut Value, path: &[&str], value: Value) {
+    let Some((head, tail)) = path.split_first() else {
+        return;
+    };
+    if tail.is_empty() {
+        if !target.is_object() {
+            *target = Value::Object(serde_json::Map::new());
+        }
+        target
+            .as_object_mut()
+            .expect("override target was initialized as an object")
+            .insert((*head).to_string(), value);
+        return;
+    }
+
+    if !target.is_object() {
+        *target = Value::Object(serde_json::Map::new());
+    }
+    let child = target
+        .as_object_mut()
+        .expect("override target was initialized as an object")
+        .entry((*head).to_string())
+        .or_insert(Value::Null);
+    set_path(child, tail, value);
 }
 
 // ─── XDG Helpers ────────────────────────────────────────────────────

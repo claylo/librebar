@@ -76,6 +76,40 @@ fn builder_with_preloaded_config() {
 }
 
 #[test]
+fn configured_builder_applies_programmatic_override_last() {
+    let tmp = TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    fs::write(&config_path, r#"custom = "file""#).unwrap();
+    let config_path = camino::Utf8PathBuf::try_from(config_path).unwrap();
+
+    let app = librebar::init("librebar-builder-override-test")
+        .config_from_file::<TestConfig>(&config_path)
+        .with_config_override("custom", "cli")
+        .start()
+        .unwrap();
+
+    assert_eq!(app.config().custom.as_deref(), Some("cli"));
+    assert_eq!(app.config_sources().override_paths, ["custom"]);
+}
+
+#[test]
+fn preloaded_config_accepts_programmatic_override() {
+    let config = TestConfig {
+        log_level: librebar::config::LogLevel::Info,
+        custom: Some("preloaded".to_string()),
+    };
+
+    let app = librebar::init("librebar-preloaded-override-test")
+        .with_config(config)
+        .with_config_override("custom", "cli")
+        .start()
+        .unwrap();
+
+    assert_eq!(app.config().custom.as_deref(), Some("cli"));
+    assert_eq!(app.config_sources().override_paths, ["custom"]);
+}
+
+#[test]
 fn app_cli_accessors() {
     let cli = TestCli::parse_from(["test-app", "--quiet", "run"]);
 

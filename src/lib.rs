@@ -1,4 +1,4 @@
-//! Liblibrebar: opinionated application foundation for Rust CLIs and services.
+//! Librebar: opinionated application foundation for Rust CLIs and services.
 //!
 //! Feature-gated modules for CLI, config, logging, and more.
 //! Each module is usable independently (escape hatches) or wired
@@ -64,16 +64,16 @@
 //!
 //! ```toml
 //! # Minimal CLI tool
-//! librebar = { version = "0.2", features = ["cli", "config", "logging"] }
+//! librebar = { version = "0.3", features = ["cli", "config", "logging"] }
 //!
 //! # CLI tool with update checks
-//! librebar = { version = "0.2", features = ["cli", "config", "logging", "shutdown", "update"] }
+//! librebar = { version = "0.3", features = ["cli", "config", "logging", "shutdown", "update"] }
 //!
 //! # Long-running service with observability
-//! librebar = { version = "0.2", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
+//! librebar = { version = "0.3", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
 //!
 //! # Plugin-extensible CLI (git-style subcommands)
-//! librebar = { version = "0.2", features = ["cli", "config", "logging", "dispatch"] }
+//! librebar = { version = "0.3", features = ["cli", "config", "logging", "dispatch"] }
 //! ```
 //!
 //! # Builder usage
@@ -136,6 +136,9 @@
 #![deny(unsafe_code)]
 
 pub mod error;
+
+#[cfg(any(feature = "logging", feature = "crash"))]
+mod time;
 
 #[cfg(feature = "cli")]
 pub mod cli;
@@ -573,6 +576,7 @@ impl Builder {
         ConfiguredBuilder {
             inner: self.inner,
             config_source: CfgSource::File(path.to_path_buf()),
+            config_overrides: Vec::new(),
         }
     }
 
@@ -586,6 +590,7 @@ impl Builder {
         ConfiguredBuilder {
             inner: self.inner,
             config_source: CfgSource::Discover,
+            config_overrides: Vec::new(),
         }
     }
 
@@ -599,6 +604,7 @@ impl Builder {
         ConfiguredBuilder {
             inner: self.inner,
             config_source: CfgSource::Preloaded(config),
+            config_overrides: Vec::new(),
         }
     }
 }
@@ -625,11 +631,25 @@ enum CfgSource<C> {
 pub struct ConfiguredBuilder<C> {
     inner: BuilderInner,
     config_source: CfgSource<C>,
+    config_overrides: Vec<config::ConfigOverride>,
 }
 
 #[cfg(feature = "config")]
 impl<C> ConfiguredBuilder<C> {
     builder_methods!();
+
+    /// Add a typed configuration override at a dotted path.
+    ///
+    /// Programmatic overrides take precedence over every other configuration
+    /// source and are applied in call order.
+    pub fn with_config_override<V>(mut self, path: impl Into<String>, value: V) -> Self
+    where
+        V: serde::Serialize,
+    {
+        self.config_overrides
+            .push(config::ConfigOverride::new(path.into(), value));
+        self
+    }
 }
 
 #[cfg(feature = "config")]
@@ -643,7 +663,13 @@ where
     ///
     /// Returns an error if config loading or logging initialization fails.
     pub fn start(self) -> Result<App<C>> {
-        let (config, sources) = match self.config_source {
+        let Self {
+            inner,
+            config_source,
+            config_overrides,
+        } = self;
+
+        let (config, sources) = match config_source {
             CfgSource::Discover => {
                 let cwd = std::env::current_dir().map_err(crate::Error::Io)?;
                 let cwd = camino::Utf8PathBuf::try_from(cwd).map_err(|e| {
@@ -655,18 +681,38 @@ where
                         ),
                     ))
                 })?;
-                config::ConfigLoader::new(&self.inner.app_name)
-                    .with_project_search(&cwd)
+                config_overrides
+                    .into_iter()
+                    .fold(
+                        config::ConfigLoader::new(&inner.app_name).with_project_search(&cwd),
+                        config::ConfigLoader::with_serialized_override,
+                    )
                     .load::<C>()?
             }
-            CfgSource::File(path) => config::ConfigLoader::new(&self.inner.app_name)
-                .with_user_config(false)
-                .with_file(&path)
+            CfgSource::File(path) => config_overrides
+                .into_iter()
+                .fold(
+                    config::ConfigLoader::new(&inner.app_name)
+                        .with_user_config(false)
+                        .with_file(&path),
+                    config::ConfigLoader::with_serialized_override,
+                )
                 .load::<C>()?,
-            CfgSource::Preloaded(config) => (config, config::ConfigSources::default()),
+            CfgSource::Preloaded(config) => {
+                let mut merged =
+                    serde_json::to_value(config).map_err(crate::Error::ConfigDeserialize)?;
+                let override_paths = config::apply_config_overrides(&mut merged, config_overrides)?;
+                let config =
+                    serde_json::from_value(merged).map_err(crate::Error::ConfigDeserialize)?;
+                let sources = config::ConfigSources {
+                    override_paths,
+                    ..config::ConfigSources::default()
+                };
+                (config, sources)
+            }
         };
 
-        let sub = self.inner.init_subsystems()?;
+        let sub = inner.init_subsystems()?;
         Ok(App {
             app_name: sub.app_name,
             version: sub.version,
