@@ -33,6 +33,7 @@ const MAX_CRASH_DUMPS: usize = 10;
 
 /// Structured crash information captured at panic time.
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct CrashInfo {
     /// The panic message (from the panic payload).
     pub message: String,
@@ -51,6 +52,51 @@ pub struct CrashInfo {
 }
 
 impl CrashInfo {
+    /// Create crash information with the current timestamp and operating system.
+    pub fn new(
+        message: impl Into<String>,
+        app_name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            location: None,
+            app_name: app_name.into(),
+            version: version.into(),
+            timestamp: crate::time::format_timestamp(),
+            os: std::env::consts::OS.to_string(),
+            backtrace: String::new(),
+        }
+    }
+
+    /// Set the source location.
+    #[must_use]
+    pub fn with_location(mut self, location: impl Into<String>) -> Self {
+        self.location = Some(location.into());
+        self
+    }
+
+    /// Override the timestamp, primarily when importing existing crash data.
+    #[must_use]
+    pub fn with_timestamp(mut self, timestamp: impl Into<String>) -> Self {
+        self.timestamp = timestamp.into();
+        self
+    }
+
+    /// Override the operating-system identifier.
+    #[must_use]
+    pub fn with_os(mut self, os: impl Into<String>) -> Self {
+        self.os = os.into();
+        self
+    }
+
+    /// Attach a captured backtrace.
+    #[must_use]
+    pub fn with_backtrace(mut self, backtrace: impl Into<String>) -> Self {
+        self.backtrace = backtrace.into();
+        self
+    }
+
     /// Format into a human-readable crash report string.
     pub fn format(&self) -> String {
         let location = self.location.as_deref().unwrap_or("<unknown location>");
@@ -93,15 +139,11 @@ pub fn install(app_name: &str, version: &str) {
             .map(|l| format!("{}:{}", l.file(), l.line()));
         let backtrace = std::backtrace::Backtrace::force_capture().to_string();
 
-        let info = CrashInfo {
-            message,
-            location,
-            app_name: app_name.clone(),
-            version: version.clone(),
-            timestamp: crate::time::format_timestamp(),
-            os: std::env::consts::OS.to_string(),
-            backtrace,
-        };
+        let mut info =
+            CrashInfo::new(message, app_name.clone(), version.clone()).with_backtrace(backtrace);
+        if let Some(location) = location {
+            info = info.with_location(location);
+        }
 
         let dump_dir = crash_dump_dir(&app_name);
         let dump_path = write_crash_dump_to(&info, &dump_dir);

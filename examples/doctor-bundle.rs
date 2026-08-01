@@ -194,20 +194,17 @@ impl DoctorCheck for ConfigCheck {
 
     fn run(&self) -> CheckResult {
         if self.sources.project_file.is_some() || self.sources.user_file.is_some() {
-            CheckResult {
-                status: CheckStatus::Ok,
-                message: "config file discovered via project/user search".into(),
-            }
+            CheckResult::new(
+                CheckStatus::Ok,
+                "config file discovered via project/user search",
+            )
         } else if !self.sources.explicit_files.is_empty() {
-            CheckResult {
-                status: CheckStatus::Ok,
-                message: "config loaded from explicit file(s)".into(),
-            }
+            CheckResult::new(CheckStatus::Ok, "config loaded from explicit file(s)")
         } else {
-            CheckResult {
-                status: CheckStatus::Warn,
-                message: "no config file found; running with defaults".into(),
-            }
+            CheckResult::new(
+                CheckStatus::Warn,
+                "no config file found; running with defaults",
+            )
         }
     }
 }
@@ -227,18 +224,18 @@ impl DoctorCheck for LogDirCheck {
 
     fn run(&self) -> CheckResult {
         match librebar::logging::platform_log_dir(&self.app_name) {
-            Some(dir) if dir.exists() => CheckResult {
-                status: CheckStatus::Ok,
-                message: format!("log dir exists at {}", dir.display()),
-            },
-            Some(dir) => CheckResult {
-                status: CheckStatus::Warn,
-                message: format!("log dir not yet created: {}", dir.display()),
-            },
-            None => CheckResult {
-                status: CheckStatus::Error,
-                message: "platform log directory could not be resolved".into(),
-            },
+            Some(dir) if dir.exists() => CheckResult::new(
+                CheckStatus::Ok,
+                format!("log dir exists at {}", dir.display()),
+            ),
+            Some(dir) => CheckResult::new(
+                CheckStatus::Warn,
+                format!("log dir not yet created: {}", dir.display()),
+            ),
+            None => CheckResult::new(
+                CheckStatus::Error,
+                "platform log directory could not be resolved",
+            ),
         }
     }
 }

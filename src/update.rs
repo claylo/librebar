@@ -23,6 +23,7 @@ const CACHE_KEY: &str = "latest-version";
 
 /// Information about an available update.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct UpdateInfo {
     /// Currently running version.
     pub current: String,
@@ -33,6 +34,19 @@ pub struct UpdateInfo {
 }
 
 impl UpdateInfo {
+    /// Create update information.
+    pub fn new(
+        current: impl Into<String>,
+        latest: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        Self {
+            current: current.into(),
+            latest: latest.into(),
+            url: url.into(),
+        }
+    }
+
     /// Format a user-friendly update notification.
     pub fn message(&self) -> String {
         format!(
@@ -149,11 +163,7 @@ impl UpdateChecker {
 
     fn compare_versions_with_url(&self, latest: &str, url: &str) -> Option<UpdateInfo> {
         if is_newer(&self.current_version, latest) {
-            Some(UpdateInfo {
-                current: self.current_version.clone(),
-                latest: latest.to_string(),
-                url: url.to_string(),
-            })
+            Some(UpdateInfo::new(&self.current_version, latest, url))
         } else {
             None
         }

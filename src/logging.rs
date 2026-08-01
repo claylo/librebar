@@ -47,6 +47,7 @@ const DEFAULT_LOG_DIR_UNIX: &str = "/var/log";
 
 /// Configuration for logging setup.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct LoggingConfig {
     /// Service name used in log file names.
     pub service: String,
@@ -169,6 +170,7 @@ pub fn env_filter(quiet: bool, verbose: u8, default_level: &str) -> EnvFilter {
 
 /// Resolved log file location.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct LogTarget {
     /// Directory containing the log file.
     pub dir: PathBuf,

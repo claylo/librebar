@@ -40,6 +40,7 @@ pub type BoxedLayer =
 
 /// Configuration for OpenTelemetry tracing export.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct OtelConfig {
     /// Service name (used as `service.name` resource attribute).
     pub service: String,

@@ -677,6 +677,8 @@ During the 0.x line, the following changes warrant a minor bump:
   **adding** a variant is additive and ships in a patch.
 - Changing the fields or payload type of an existing error variant. This
   includes replacing its [`BoxError`](src/error.rs) source with another type.
+- Adding a field to an exhaustive public struct, or changing/removing an
+  existing public field.
 - Changing the semantics of a stable API (e.g., a method that previously
   returned `Ok(None)` now returns `Err`).
 - Raising the MSRV beyond what is documented in `rust-version` in
@@ -687,6 +689,8 @@ The following changes are **not** breaking and can land in a patch:
 - Adding new public items (types, functions, methods, feature flags).
 - Adding new variants to `Error`, `HttpError`, `CacheError`, or
   `ConfigParseError` (all `#[non_exhaustive]`).
+- Adding fields to public `#[non_exhaustive]` structs while preserving their
+  constructors and builder methods.
 - Adding new optional config fields that have `#[serde(default)]`.
 - Internal refactoring, performance improvements, and dependency bumps
   that don't change the public surface.

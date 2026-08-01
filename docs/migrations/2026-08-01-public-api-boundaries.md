@@ -76,6 +76,36 @@ Every wrapped error is also available through `std::error::Error::source()`.
 Walking that chain reaches nested sources in the same order they were reported
 by the dependency.
 
+## Replace growable struct literals
+
+Librebar's growable public records are now `#[non_exhaustive]`. Read and mutate
+their public fields after construction, but create them through their supported
+constructor or builder:
+
+```rust
+use librebar::diagnostics::{CheckResult, CheckStatus};
+use librebar::http::HttpClientConfig;
+use librebar::update::UpdateInfo;
+
+let mut http = HttpClientConfig::new("myapp", "0.4.0");
+http.max_redirects = 5;
+
+let check = CheckResult::new(CheckStatus::Ok, "configuration loaded");
+let update = UpdateInfo::new("0.4.0", "0.5.0", "https://example.com/releases/0.5.0");
+# let _ = (http, check, update);
+```
+
+Create crash records with `CrashInfo::new`; use its `with_location`,
+`with_timestamp`, `with_os`, and `with_backtrace` methods when importing or
+testing a known record. Use `ConfigSources::default`,
+`LoggingConfig::from_app_name`, and `OtelConfig::from_app_name` for those
+records. CLI schema output records come from `schema_for`; application-supplied
+schema metadata keeps its existing constructors and builders.
+
+`HttpClientConfig::http_cache_stale_retention` now exists in every `http`
+build, so Cargo feature unification no longer changes the struct's shape. The
+setting affects requests only when the `http-cache` feature is enabled.
+
 ## Remove redundant dependencies
 
 Run your normal checks, then look for direct dependencies that are no longer

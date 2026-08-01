@@ -142,7 +142,27 @@ pub use bytes::Bytes;
 // ─── Config ─────────────────────────────────────────────────────────
 
 /// Configuration for [`HttpClient`].
+///
+/// Construct this value with [`HttpClientConfig::new`] and its `with_*`
+/// methods. Downstream struct literals are intentionally rejected so fields
+/// can be added without breaking callers:
+///
+/// ```compile_fail
+/// use librebar::http::{HttpClientConfig, RetryPolicy};
+/// use std::time::Duration;
+///
+/// let _ = HttpClientConfig {
+///     user_agent: "example/1.0".to_string(),
+///     timeout: Duration::from_secs(30),
+///     max_redirects: 10,
+///     decompression: true,
+///     retry_policy: RetryPolicy::new(),
+///     max_response_size: 16 * 1024 * 1024,
+///     http_cache_stale_retention: Duration::from_secs(7 * 24 * 60 * 60),
+/// };
+/// ```
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct HttpClientConfig {
     /// Value sent as the `User-Agent` header on every request.
     pub user_agent: String,
@@ -157,7 +177,6 @@ pub struct HttpClientConfig {
     /// Maximum decoded response body retained in memory. Zero disables the limit.
     pub max_response_size: usize,
     /// How long stale HTTP entries remain available for revalidation.
-    #[cfg(feature = "http-cache")]
     pub http_cache_stale_retention: Duration,
 }
 
@@ -171,7 +190,6 @@ impl HttpClientConfig {
             decompression: true,
             retry_policy: RetryPolicy::new(),
             max_response_size: 16 * 1024 * 1024,
-            #[cfg(feature = "http-cache")]
             http_cache_stale_retention: Duration::from_secs(7 * 24 * 60 * 60),
         }
     }

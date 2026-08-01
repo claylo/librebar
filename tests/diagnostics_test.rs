@@ -40,10 +40,7 @@ impl DoctorCheck for AlwaysPassCheck {
     }
 
     fn run(&self) -> CheckResult {
-        CheckResult {
-            status: CheckStatus::Ok,
-            message: "Everything is fine".to_string(),
-        }
+        CheckResult::new(CheckStatus::Ok, "Everything is fine")
     }
 }
 
@@ -59,10 +56,7 @@ impl DoctorCheck for AlwaysFailCheck {
     }
 
     fn run(&self) -> CheckResult {
-        CheckResult {
-            status: CheckStatus::Error,
-            message: "Something is wrong".to_string(),
-        }
+        CheckResult::new(CheckStatus::Error, "Something is wrong")
     }
 }
 

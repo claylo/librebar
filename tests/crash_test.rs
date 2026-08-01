@@ -5,17 +5,49 @@ use librebar::crash;
 use std::fs;
 use tempfile::TempDir;
 
+fn crash_info(
+    message: impl Into<String>,
+    location: Option<&str>,
+    timestamp: impl Into<String>,
+    os: impl Into<String>,
+    backtrace: impl Into<String>,
+) -> crash::CrashInfo {
+    let mut info = crash::CrashInfo::new(message, "test-app", "0.1.0")
+        .with_timestamp(timestamp)
+        .with_os(os)
+        .with_backtrace(backtrace);
+    if let Some(location) = location {
+        info = info.with_location(location);
+    }
+    info
+}
+
+#[test]
+fn crash_info_constructor_sets_and_overrides_fields() {
+    let info = crash::CrashInfo::new("test panic", "test-app", "0.1.0")
+        .with_location("src/main.rs:42")
+        .with_timestamp("2026-04-08T12:00:00.000Z")
+        .with_os("macos")
+        .with_backtrace("   0: test::frame");
+
+    assert_eq!(info.message, "test panic");
+    assert_eq!(info.location.as_deref(), Some("src/main.rs:42"));
+    assert_eq!(info.app_name, "test-app");
+    assert_eq!(info.version, "0.1.0");
+    assert_eq!(info.timestamp, "2026-04-08T12:00:00.000Z");
+    assert_eq!(info.os, "macos");
+    assert_eq!(info.backtrace, "   0: test::frame");
+}
+
 #[test]
 fn crash_info_format_contains_required_fields() {
-    let info = crash::CrashInfo {
-        message: "test panic".to_string(),
-        location: Some("src/main.rs:42".to_string()),
-        app_name: "test-app".to_string(),
-        version: "0.1.0".to_string(),
-        timestamp: "2026-04-08T12:00:00.000Z".to_string(),
-        os: "macos".to_string(),
-        backtrace: "   0: test::frame".to_string(),
-    };
+    let info = crash_info(
+        "test panic",
+        Some("src/main.rs:42"),
+        "2026-04-08T12:00:00.000Z",
+        "macos",
+        "   0: test::frame",
+    );
 
     let formatted = info.format();
     assert!(formatted.contains("test panic"));
@@ -28,15 +60,13 @@ fn crash_info_format_contains_required_fields() {
 #[test]
 fn write_crash_dump_creates_file() {
     let tmp = TempDir::new().unwrap();
-    let info = crash::CrashInfo {
-        message: "test panic".to_string(),
-        location: Some("src/main.rs:42".to_string()),
-        app_name: "test-app".to_string(),
-        version: "0.1.0".to_string(),
-        timestamp: "2026-04-08T12:00:00.000Z".to_string(),
-        os: std::env::consts::OS.to_string(),
-        backtrace: String::new(),
-    };
+    let info = crash_info(
+        "test panic",
+        Some("src/main.rs:42"),
+        "2026-04-08T12:00:00.000Z",
+        std::env::consts::OS,
+        "",
+    );
 
     let path = crash::write_crash_dump_to(&info, tmp.path());
     assert!(path.is_some(), "should write crash file");
@@ -50,15 +80,13 @@ fn write_crash_dump_creates_file() {
 #[test]
 fn crash_dump_is_structured_json() {
     let tmp = TempDir::new().unwrap();
-    let info = crash::CrashInfo {
-        message: "first line\nsecond line".to_string(),
-        location: Some("src/main.rs:42".to_string()),
-        app_name: "test-app".to_string(),
-        version: "0.1.0".to_string(),
-        timestamp: "2026-04-08T12:00:00.000Z".to_string(),
-        os: "macos".to_string(),
-        backtrace: "0: test::frame".to_string(),
-    };
+    let info = crash_info(
+        "first line\nsecond line",
+        Some("src/main.rs:42"),
+        "2026-04-08T12:00:00.000Z",
+        "macos",
+        "0: test::frame",
+    );
 
     let path = crash::write_crash_dump_to(&info, tmp.path()).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
@@ -78,15 +106,13 @@ fn crash_dump_is_owner_only() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let tmp = TempDir::new().unwrap();
-    let info = crash::CrashInfo {
-        message: "sensitive panic".to_string(),
-        location: Some("src/main.rs:42".to_string()),
-        app_name: "test-app".to_string(),
-        version: "0.1.0".to_string(),
-        timestamp: "2026-04-08T12:00:00.000Z".to_string(),
-        os: std::env::consts::OS.to_string(),
-        backtrace: "private source paths".to_string(),
-    };
+    let info = crash_info(
+        "sensitive panic",
+        Some("src/main.rs:42"),
+        "2026-04-08T12:00:00.000Z",
+        std::env::consts::OS,
+        "private source paths",
+    );
 
     let path = crash::write_crash_dump_to(&info, tmp.path()).unwrap();
     let mode = fs::metadata(path).unwrap().permissions().mode();
@@ -97,15 +123,13 @@ fn crash_dump_is_owner_only() {
 #[test]
 fn crash_dump_does_not_replace_a_same_timestamp_file() {
     let tmp = TempDir::new().unwrap();
-    let info = crash::CrashInfo {
-        message: "first panic".to_string(),
-        location: None,
-        app_name: "test-app".to_string(),
-        version: "0.1.0".to_string(),
-        timestamp: "2026-04-08T12:00:00.000Z".to_string(),
-        os: std::env::consts::OS.to_string(),
-        backtrace: String::new(),
-    };
+    let info = crash_info(
+        "first panic",
+        None,
+        "2026-04-08T12:00:00.000Z",
+        std::env::consts::OS,
+        "",
+    );
 
     let path = crash::write_crash_dump_to(&info, tmp.path()).unwrap();
     fs::write(&path, "original dump").unwrap();
@@ -120,15 +144,13 @@ fn crash_dump_retention_keeps_the_ten_newest_files() {
     let mut paths = Vec::new();
 
     for second in 0..12 {
-        let info = crash::CrashInfo {
-            message: format!("panic {second}"),
-            location: None,
-            app_name: "test-app".to_string(),
-            version: "0.1.0".to_string(),
-            timestamp: format!("2026-04-08T12:00:{second:02}.000Z"),
-            os: std::env::consts::OS.to_string(),
-            backtrace: String::new(),
-        };
+        let info = crash_info(
+            format!("panic {second}"),
+            None,
+            format!("2026-04-08T12:00:{second:02}.000Z"),
+            std::env::consts::OS,
+            "",
+        );
         paths.push(crash::write_crash_dump_to(&info, tmp.path()).unwrap());
     }
 

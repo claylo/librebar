@@ -88,6 +88,7 @@ impl LogLevel {
 /// Returned alongside the config from [`ConfigLoader::load()`] so commands
 /// like `doctor` and `info` can report the actual config files.
 #[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
 pub struct ConfigSources {
     /// Project config file found by walking up from the search root.
     #[serde(skip_serializing_if = "Option::is_none")]

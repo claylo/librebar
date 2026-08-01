@@ -15,7 +15,7 @@
 //!     fn name(&self) -> &str { "config" }
 //!     fn category(&self) -> &str { "configuration" }
 //!     fn run(&self) -> CheckResult {
-//!         CheckResult { status: CheckStatus::Ok, message: "Config valid".into() }
+//!         CheckResult::new(CheckStatus::Ok, "Config valid")
 //!     }
 //! }
 //!
@@ -47,11 +47,22 @@ pub trait DoctorCheck: Send {
 
 /// Result of a single doctor check.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CheckResult {
     /// Status of the check.
     pub status: CheckStatus,
     /// Human-readable message describing the result.
     pub message: String,
+}
+
+impl CheckResult {
+    /// Create a doctor check result.
+    pub fn new(status: CheckStatus, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
 }
 
 /// Status of a doctor check.
@@ -74,6 +85,7 @@ impl CheckStatus {
 
 /// Named check result (name + category + result).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct NamedResult {
     /// Check name.
     pub name: String,
@@ -85,6 +97,7 @@ pub struct NamedResult {
 
 /// Summary of doctor check results.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct DoctorSummary {
     /// Number of checks that passed.
     pub passed: usize,

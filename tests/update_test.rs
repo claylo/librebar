@@ -49,11 +49,11 @@ fn version_is_newer() {
 
 #[test]
 fn update_info_display() {
-    let info = UpdateInfo {
-        current: "0.1.0".to_string(),
-        latest: "0.2.0".to_string(),
-        url: "https://github.com/owner/repo/releases/tag/v0.2.0".to_string(),
-    };
+    let info = UpdateInfo::new(
+        "0.1.0",
+        "0.2.0",
+        "https://github.com/owner/repo/releases/tag/v0.2.0",
+    );
     let msg = info.message();
     assert!(msg.contains("0.2.0"));
     assert!(msg.contains("0.1.0"));

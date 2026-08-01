@@ -12,6 +12,7 @@ pub const CLI_SPEC_VERSION: &str = "0.2";
 
 /// A complete CLI Spec v0.2 document.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct SchemaDocument {
     /// CLI Spec schema version.
     pub clispec: &'static str,
@@ -39,6 +40,7 @@ pub struct SchemaDocument {
 
 /// Default output behavior advertised in a schema document.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OutputBehavior {
     /// Format selected on a terminal.
     pub tty: &'static str,
@@ -48,6 +50,7 @@ pub struct OutputBehavior {
 
 /// A command entry generated from Clap and enriched by application metadata.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct CommandSchema {
     /// Full space-separated command path.
     pub name: String,
@@ -82,6 +85,7 @@ pub struct CommandSchema {
 
 /// Invocation metadata for one Clap argument.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct ArgumentSchema {
     /// Flag spelling or positional identifier.
     pub name: String,
@@ -121,6 +125,7 @@ pub struct ArgumentSchema {
 
 /// A reflected Clap argument group.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct ArgumentGroupSchema {
     /// Group identifier.
     pub name: String,
@@ -145,7 +150,21 @@ pub enum Stability {
 }
 
 /// One field in a command's structured output.
+///
+/// Construct fields with [`OutputField::new`] and its builder methods.
+/// Downstream struct literals are intentionally rejected so metadata can grow:
+///
+/// ```compile_fail
+/// use librebar::cli::OutputField;
+///
+/// let _ = OutputField {
+///     name: "id".to_string(),
+///     value_type: "string".to_string(),
+///     description: None,
+/// };
+/// ```
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OutputField {
     /// Stable field name.
     pub name: String,
@@ -177,6 +196,7 @@ impl OutputField {
 
 /// A self-contained command invocation used by compliance tooling.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct CommandExample {
     /// Arguments after the command path.
     pub args: Vec<String>,
@@ -208,6 +228,7 @@ impl CommandExample {
 
 /// Structured error kind supplied by the application.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct ErrorMetadata {
     /// Stable machine-readable error kind.
     pub kind: String,
@@ -257,6 +278,7 @@ impl ErrorMetadata {
 
 /// A documented non-zero exit that represents data rather than failure.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OutcomeMetadata {
     /// Process exit code.
     pub code: u8,
