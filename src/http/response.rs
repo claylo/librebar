@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::error::HttpError;
+use crate::error::{HttpError, boxed_error};
 use crate::http::{AsHeaderName, HeaderMap, HeaderValue, StatusCode, Version, header};
 
 /// Metadata collected from an HTTP response.
@@ -175,7 +175,8 @@ impl Response {
     /// Returns [`crate::Error::Http`] if the body is not valid JSON or cannot
     /// be deserialized into `T`.
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> crate::Result<T> {
-        serde_json::from_slice(&self.body).map_err(|error| HttpError::Json(error).into())
+        serde_json::from_slice(&self.body)
+            .map_err(|error| HttpError::Json(boxed_error(error)).into())
     }
 
     /// Return the raw response body bytes.

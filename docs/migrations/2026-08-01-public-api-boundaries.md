@@ -45,6 +45,37 @@ use librebar::http::{AsHeaderName, HeaderMap, HeaderName, Request, Uri, header};
 The types still come from the `http` and `bytes` crates. Request code does not
 change. Hyper now stays behind the client API.
 
+## Update error payload handling
+
+Pattern matching still uses the same variant names. Dependency-backed tuple
+variants now contain `librebar::error::BoxError`:
+
+```rust
+fn report(error: &librebar::Error) {
+    if let librebar::Error::ConfigDeserialize(source) = error {
+        eprintln!("config error: {source}");
+
+        if let Some(json) =
+            source.downcast_ref::<librebar::config::serde_json::Error>()
+        {
+            eprintln!("line: {}", json.line());
+        }
+    }
+}
+```
+
+Code that constructs one of these variants must box the concrete error:
+
+```rust
+# fn wrap(json_error: librebar::config::serde_json::Error) -> librebar::Error {
+librebar::Error::ConfigDeserialize(Box::new(json_error))
+# }
+```
+
+Every wrapped error is also available through `std::error::Error::source()`.
+Walking that chain reaches nested sources in the same order they were reported
+by the dependency.
+
 ## Remove redundant dependencies
 
 Run your normal checks, then look for direct dependencies that are no longer

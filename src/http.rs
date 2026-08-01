@@ -135,7 +135,7 @@ pub use response::{ConditionalResponse, ModificationCheck, Response, ResponseMet
 mod http_cache;
 
 use crate::Result;
-use crate::error::HttpError;
+use crate::error::{HttpError, boxed_error};
 
 pub use bytes::Bytes;
 
@@ -522,7 +522,7 @@ impl HttpClient {
     ) -> Result<Self> {
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-            .map_err(HttpError::Tls)?
+            .map_err(|error| HttpError::Tls(boxed_error(error)))?
             .https_or_http()
             .enable_all_versions()
             .build();
@@ -558,8 +558,8 @@ impl HttpClient {
         }
 
         if config.max_redirects > 0 {
-            let user_agent =
-                HeaderValue::from_str(&config.user_agent).map_err(HttpError::InvalidHeaderValue)?;
+            let user_agent = HeaderValue::from_str(&config.user_agent)
+                .map_err(|error| HttpError::InvalidHeaderValue(boxed_error(error)))?;
             inner = HttpService::new(FollowRedirect::with_policy(
                 inner,
                 RedirectPolicy::new(config.max_redirects, user_agent),
@@ -691,12 +691,14 @@ impl HttpClient {
         url: &str,
         body: impl AsRef<[u8]>,
     ) -> Result<Response> {
-        let uri: Uri = url.parse().map_err(HttpError::InvalidUrl)?;
+        let uri: Uri = url
+            .parse()
+            .map_err(|error| HttpError::InvalidUrl(boxed_error(error)))?;
         let req = Request::builder()
             .method(method)
             .uri(&uri)
             .body(Bytes::copy_from_slice(body.as_ref()))
-            .map_err(HttpError::RequestBuild)?;
+            .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
 
         self.send(req).await
     }
@@ -802,7 +804,7 @@ impl HttpClient {
     pub(super) fn prepare_request(&self, request: &mut Request<Bytes>) -> Result<()> {
         if !request.headers().contains_key(header::USER_AGENT) {
             let user_agent = HeaderValue::from_str(&self.config.user_agent)
-                .map_err(HttpError::InvalidHeaderValue)?;
+                .map_err(|error| HttpError::InvalidHeaderValue(boxed_error(error)))?;
             request.headers_mut().insert(header::USER_AGENT, user_agent);
         }
         #[cfg(feature = "http-cookies")]
@@ -814,7 +816,9 @@ impl HttpClient {
 }
 
 fn conditional_request(method: Method, url: &str, validator: &Validator) -> Result<Request<Bytes>> {
-    let uri: Uri = url.parse().map_err(HttpError::InvalidUrl)?;
+    let uri: Uri = url
+        .parse()
+        .map_err(|error| HttpError::InvalidUrl(boxed_error(error)))?;
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(etag) = validator.etag() {
         builder = builder.header(header::IF_NONE_MATCH, etag);
@@ -823,7 +827,7 @@ fn conditional_request(method: Method, url: &str, validator: &Validator) -> Resu
     }
     builder
         .body(Bytes::new())
-        .map_err(HttpError::RequestBuild)
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))
         .map_err(Into::into)
 }
 
@@ -852,7 +856,7 @@ fn clone_request(request: &Request<RequestBody>) -> Result<Request<RequestBody>>
         .uri(request.uri().clone())
         .version(request.version())
         .body(request.body().clone())
-        .map_err(HttpError::RequestBuild)?;
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
     *clone.headers_mut() = request.headers().clone();
     *clone.extensions_mut() = request.extensions().clone();
     Ok(clone)

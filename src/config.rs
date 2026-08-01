@@ -38,7 +38,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error::{Error, Result};
+use crate::error::{ConfigParseError, Error, Result, boxed_error};
 
 /// Re-export of [`serde_json`], used by the dynamic config APIs.
 pub use serde_json;
@@ -189,9 +189,9 @@ pub fn deep_merge(base: &mut Value, overlay: Value) -> Result<()> {
 pub fn parse_toml(content: &str) -> Result<Value> {
     let toml_value: toml::Value = toml::from_str(content).map_err(|e| Error::ConfigParse {
         path: "<toml>".to_string(),
-        source: Box::new(e.into()),
+        source: Box::new(ConfigParseError::Toml(boxed_error(e))),
     })?;
-    serde_json::to_value(toml_value).map_err(Error::ConfigDeserialize)
+    serde_json::to_value(toml_value).map_err(|error| Error::ConfigDeserialize(boxed_error(error)))
 }
 
 /// Parse YAML content into a `serde_json::Value`.
@@ -202,7 +202,7 @@ pub fn parse_toml(content: &str) -> Result<Value> {
 pub fn parse_yaml(content: &str) -> Result<Value> {
     serde_saphyr::from_str(content).map_err(|e| Error::ConfigParse {
         path: "<yaml>".to_string(),
-        source: Box::new(e.into()),
+        source: Box::new(ConfigParseError::Yaml(boxed_error(e))),
     })
 }
 
@@ -214,7 +214,7 @@ pub fn parse_yaml(content: &str) -> Result<Value> {
 pub fn parse_json(content: &str) -> Result<Value> {
     serde_json::from_str(content).map_err(|e| Error::ConfigParse {
         path: "<json>".to_string(),
-        source: Box::new(e.into()),
+        source: Box::new(ConfigParseError::Json(boxed_error(e))),
     })
 }
 
@@ -377,7 +377,8 @@ impl ConfigLoader {
         require_source: bool,
     ) -> Result<(C, ConfigSources)> {
         tracing::debug!("loading configuration");
-        let mut merged = serde_json::to_value(C::default()).map_err(Error::ConfigDeserialize)?;
+        let mut merged = serde_json::to_value(C::default())
+            .map_err(|error| Error::ConfigDeserialize(boxed_error(error)))?;
         let mut sources = ConfigSources::default();
 
         // User config (lowest precedence of file sources)
@@ -424,7 +425,8 @@ impl ConfigLoader {
             return Err(Error::ConfigNotFound);
         }
 
-        let config: C = serde_json::from_value(merged).map_err(Error::ConfigDeserialize)?;
+        let config: C = serde_json::from_value(merged)
+            .map_err(|error| Error::ConfigDeserialize(boxed_error(error)))?;
         tracing::info!("configuration loaded");
         Ok((config, sources))
     }

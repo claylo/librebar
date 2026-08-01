@@ -128,7 +128,8 @@ impl ShutdownHandle {
     ///
     /// Returns an error if signal handler registration fails.
     pub fn register_signals(&self) -> crate::Result<()> {
-        let runtime = tokio::runtime::Handle::try_current().map_err(crate::Error::NoRuntime)?;
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|error| crate::Error::NoRuntime(crate::error::boxed_error(error)))?;
 
         #[cfg(unix)]
         let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())

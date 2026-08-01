@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use super::{Bytes, CacheStatus, HttpClient, Response, ResponseMetadata};
 use crate::cache::Cache;
-use crate::error::CacheError;
+use crate::error::{CacheError, HttpError, boxed_error};
 use crate::{Error, Result};
 
 const HTTP_CACHE_MAGIC: &[u8; 8] = b"LBRHT02\0";
@@ -369,12 +369,14 @@ pub(super) async fn get_cached(
     key: &str,
     url: &str,
 ) -> Result<Response> {
-    let uri: http::Uri = url.parse().map_err(crate::error::HttpError::InvalidUrl)?;
+    let uri: http::Uri = url
+        .parse()
+        .map_err(|error| HttpError::InvalidUrl(boxed_error(error)))?;
     let mut wire_request = Request::builder()
         .method(Method::GET)
         .uri(uri)
         .body(Bytes::new())
-        .map_err(crate::error::HttpError::RequestBuild)?;
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
     client.prepare_request(&mut wire_request)?;
     let policy_request = policy_request(&wire_request)?;
     let now = SystemTime::now();
@@ -419,7 +421,7 @@ fn policy_request(wire: &Request<Bytes>) -> Result<Request<()>> {
         .uri(wire.uri().clone())
         .version(wire.version())
         .body(())
-        .map_err(crate::error::HttpError::RequestBuild)?;
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
     *request.headers_mut() = wire.headers().clone();
     fingerprint_request_headers(request.headers_mut());
     Ok(request)
@@ -515,7 +517,7 @@ async fn revalidate(
         .uri(policy_revalidation.uri().clone())
         .version(policy_revalidation.version())
         .body(Bytes::new())
-        .map_err(crate::error::HttpError::RequestBuild)?;
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
     *wire_revalidation.headers_mut() = policy_revalidation.headers().clone();
     restore_wire_headers(wire_revalidation.headers_mut(), wire_request.headers());
 
@@ -576,7 +578,7 @@ fn response_head(response: &Response) -> Result<hyper::Response<()>> {
         .status(response.status())
         .version(response.version())
         .body(())
-        .map_err(crate::error::HttpError::RequestBuild)?;
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
     *head.headers_mut() = response.headers().clone();
     Ok(head)
 }
@@ -589,7 +591,7 @@ fn cached_response_head(
         .status(StatusCode::from_u16(cached.status).map_err(corrupt_cache_error)?)
         .version(cached.version.into())
         .body(())
-        .map_err(crate::error::HttpError::RequestBuild)?;
+        .map_err(|error| HttpError::RequestBuild(boxed_error(error)))?;
     *head.headers_mut() = headers;
     Ok(head)
 }

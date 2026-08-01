@@ -35,7 +35,7 @@ impl BlockingTonicRuntime {
                         .with_tonic()
                         .with_endpoint(endpoint)
                         .build()
-                        .map_err(crate::Error::OtelInit);
+                        .map_err(|error| crate::Error::OtelInit(crate::error::boxed_error(error)));
 
                     match exporter {
                         Ok(exporter) => {

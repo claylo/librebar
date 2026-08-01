@@ -382,7 +382,7 @@ impl BuilderInner {
                 .with(filter)
                 .with(log_layer)
                 .try_init()
-                .map_err(Error::TracingInit)?;
+                .map_err(|error| Error::TracingInit(error::boxed_error(error)))?;
         }
 
         #[cfg(all(feature = "logging", feature = "otel"))]
@@ -402,7 +402,7 @@ impl BuilderInner {
             tracing_subscriber::registry()
                 .with(layers)
                 .try_init()
-                .map_err(Error::TracingInit)?;
+                .map_err(|error| Error::TracingInit(error::boxed_error(error)))?;
         }
 
         #[cfg(feature = "shutdown")]
@@ -720,11 +720,13 @@ where
                 )
                 .load::<C>()?,
             CfgSource::Preloaded(config) => {
-                let mut merged =
-                    serde_json::to_value(config).map_err(crate::Error::ConfigDeserialize)?;
+                let mut merged = serde_json::to_value(config).map_err(|error| {
+                    crate::Error::ConfigDeserialize(crate::error::boxed_error(error))
+                })?;
                 let override_paths = config::apply_config_overrides(&mut merged, config_overrides)?;
-                let config =
-                    serde_json::from_value(merged).map_err(crate::Error::ConfigDeserialize)?;
+                let config = serde_json::from_value(merged).map_err(|error| {
+                    crate::Error::ConfigDeserialize(crate::error::boxed_error(error))
+                })?;
                 let sources = config::ConfigSources {
                     override_paths,
                     ..config::ConfigSources::default()

@@ -2,6 +2,27 @@
 
 use thiserror::Error;
 
+/// Opaque error source used at public dependency boundaries.
+///
+/// The concrete error remains available for [`std::error::Error::source`]
+/// traversal and downcasting without making its crate or version part of a
+/// librebar error enum's layout.
+pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+#[cfg(any(
+    feature = "config",
+    feature = "http",
+    feature = "logging",
+    feature = "otel",
+    feature = "shutdown"
+))]
+pub(crate) fn boxed_error<E>(error: E) -> BoxError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    Box::new(error)
+}
+
 /// Errors that can occur during librebar initialization and operation.
 ///
 /// This enum is `#[non_exhaustive]`: downstream `match` expressions must include
@@ -23,7 +44,7 @@ pub enum Error {
     /// Configuration deserialization failed.
     #[cfg(feature = "config")]
     #[error("failed to deserialize config: {0}")]
-    ConfigDeserialize(serde_json::Error),
+    ConfigDeserialize(#[source] BoxError),
 
     /// Config nesting exceeded the maximum depth during merge.
     #[cfg(feature = "config")]
@@ -63,27 +84,27 @@ pub enum Error {
     /// OpenTelemetry exporter initialization failed.
     #[cfg(feature = "otel")]
     #[error("failed to initialize OpenTelemetry: {0}")]
-    OtelInit(opentelemetry_otlp::ExporterBuildError),
+    OtelInit(#[source] BoxError),
 
     /// Tracing global subscriber already set or initialization failed.
     #[cfg(feature = "logging")]
     #[error("failed to initialize tracing subscriber: {0}")]
-    TracingInit(tracing_subscriber::util::TryInitError),
+    TracingInit(#[source] BoxError),
 
     /// Shutdown signal handler registration failed.
     #[cfg(feature = "shutdown")]
     #[error("failed to register shutdown handler: {0}")]
-    ShutdownInit(std::io::Error),
+    ShutdownInit(#[source] std::io::Error),
 
     /// No Tokio runtime available for async initialization.
     #[cfg(feature = "shutdown")]
     #[error("no active Tokio runtime: {0}")]
-    NoRuntime(tokio::runtime::TryCurrentError),
+    NoRuntime(#[source] BoxError),
 
     /// Lockfile acquisition failed.
     #[cfg(feature = "lockfile")]
     #[error("failed to acquire lock: {0}")]
-    Lock(std::io::Error),
+    Lock(#[source] std::io::Error),
 
     /// HTTP client error.
     #[cfg(feature = "http")]
@@ -98,12 +119,12 @@ pub enum Error {
     /// External command dispatch error.
     #[cfg(feature = "dispatch")]
     #[error("dispatch error: {0}")]
-    Dispatch(std::io::Error),
+    Dispatch(#[source] std::io::Error),
 
     /// Diagnostic error.
     #[cfg(feature = "diagnostics")]
     #[error("diagnostic error: {0}")]
-    Diagnostic(std::io::Error),
+    Diagnostic(#[source] std::io::Error),
 
     /// I/O error during initialization.
     #[error(transparent)]
@@ -122,19 +143,19 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum HttpError {
     /// TLS provider initialization failed.
     #[error("TLS: {0}")]
-    Tls(#[from] rustls::Error),
+    Tls(#[source] BoxError),
     /// URL could not be parsed.
     #[error("invalid URL: {0}")]
-    InvalidUrl(#[from] http::uri::InvalidUri),
+    InvalidUrl(#[source] BoxError),
     /// HTTP request could not be constructed.
     #[error("request build: {0}")]
-    RequestBuild(#[from] http::Error),
+    RequestBuild(#[source] BoxError),
     /// HTTP header value is invalid.
     #[error("invalid header value: {0}")]
-    InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
+    InvalidHeaderValue(#[source] BoxError),
     /// Connection, protocol, or middleware error during request.
     #[error("request: {0}")]
-    Request(#[source] tower::BoxError),
+    Request(#[source] BoxError),
     /// A redirect attempted to move an HTTPS request to plaintext HTTP.
     #[error("refused HTTPS-to-HTTP redirect")]
     RedirectDowngrade,
@@ -156,7 +177,7 @@ pub enum HttpError {
         /// Cookie jar path.
         path: String,
         /// Underlying filesystem or serialization error.
-        source: tower::BoxError,
+        source: BoxError,
     },
     /// The decoded response exceeded the configured in-memory limit.
     #[error("response body exceeds maximum of {maximum} bytes")]
@@ -166,13 +187,13 @@ pub enum HttpError {
     },
     /// Error reading response body.
     #[error("response body: {0}")]
-    Body(#[source] tower::BoxError),
+    Body(#[source] BoxError),
     /// I/O or timeout error.
     #[error("{0}")]
     Io(#[from] std::io::Error),
     /// JSON deserialization of response body failed.
     #[error("JSON: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(#[source] BoxError),
 }
 
 /// Errors from the file cache.
@@ -185,10 +206,10 @@ pub enum CacheError {
     Io(#[from] std::io::Error),
     /// JSON serialization or deserialization error.
     #[error("JSON: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(#[source] BoxError),
     /// Base64 decoding error.
     #[error("decode: {0}")]
-    Decode(#[from] base64::DecodeError),
+    Decode(#[source] BoxError),
     /// Invalid or unsupported on-disk cache framing.
     #[error("invalid cache entry format: {0}")]
     Format(String),
@@ -201,13 +222,13 @@ pub enum CacheError {
 pub enum ConfigParseError {
     /// TOML parse error.
     #[error("{0}")]
-    Toml(#[from] toml::de::Error),
+    Toml(#[source] BoxError),
     /// YAML parse error.
     #[error("{0}")]
-    Yaml(#[from] serde_saphyr::Error),
+    Yaml(#[source] BoxError),
     /// JSON parse error.
     #[error("{0}")]
-    Json(#[from] serde_json::Error),
+    Json(#[source] BoxError),
     /// I/O error reading the file.
     #[error("{0}")]
     Io(#[from] std::io::Error),

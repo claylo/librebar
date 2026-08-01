@@ -675,6 +675,8 @@ During the 0.x line, the following changes warrant a minor bump:
   (or any of its per-module companions: `HttpError`, `CacheError`,
   `ConfigParseError`). These enums are all `#[non_exhaustive]`, so
   **adding** a variant is additive and ships in a patch.
+- Changing the fields or payload type of an existing error variant. This
+  includes replacing its [`BoxError`](src/error.rs) source with another type.
 - Changing the semantics of a stable API (e.g., a method that previously
   returned `Ok(None)` now returns `Err`).
 - Raising the MSRV beyond what is documented in `rust-version` in
@@ -702,6 +704,11 @@ HTTP transport rather than the public HTTP type boundary, and MCP's stdio
 helper does not expose Tokio's concrete stdin and stdout types. Changing a
 deliberately exposed dependency type follows the same versioning rules as any
 other public API change.
+
+Errors from implementation dependencies use [`error::BoxError`](src/error.rs)
+instead of exposing the dependency's error type in a variant. The concrete
+error and any nested sources remain available through `Error::source()` and
+downcasting.
 
 See [Update dependency imports](docs/migrations/2026-08-01-public-api-boundaries.md)
 for the call-site changes and dependency cleanup steps.

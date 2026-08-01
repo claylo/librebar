@@ -35,7 +35,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::error::Result;
+use crate::error::{Result, boxed_error};
 
 /// Re-export of [`tracing_subscriber`], used by the logging composition APIs.
 pub use tracing_subscriber;
@@ -109,7 +109,7 @@ pub fn init(cfg: &LoggingConfig, env_filter: EnvFilter) -> Result<LoggingGuard> 
         .with(env_filter)
         .with(log_layer)
         .try_init()
-        .map_err(crate::Error::TracingInit)?;
+        .map_err(|error| crate::Error::TracingInit(boxed_error(error)))?;
 
     tracing::debug!("logging initialized");
 

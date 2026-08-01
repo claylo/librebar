@@ -25,7 +25,7 @@
 //!   (requires `otel-http-json`), or `grpc` (requires `otel-grpc`)
 //! - `{APP}_ENV` — deployment environment label (defaults to `"dev"`)
 
-use crate::error::Result;
+use crate::error::{Result, boxed_error};
 
 /// Re-export of [`tracing_subscriber`], used by the OTEL layer API.
 pub use tracing_subscriber;
@@ -209,12 +209,12 @@ fn build_exporter(endpoint: &str, protocol: &str) -> Result<BuiltExporter> {
         }
 
         #[cfg(not(feature = "otel-http-json"))]
-        "http/json" => Err(crate::Error::OtelInit(
+        "http/json" => Err(crate::Error::OtelInit(boxed_error(
             opentelemetry_otlp::ExporterBuildError::InvalidConfig {
                 name: OtelConfig::ENV_VAR_PROTOCOL.to_string(),
                 reason: "http/json requires librebar feature 'otel-http-json'".to_string(),
             },
-        )),
+        ))),
 
         // http/protobuf or anything else — preserve the protobuf default.
         _ => build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpBinary).map(
@@ -242,7 +242,7 @@ fn build_http_exporter(
         .with_timeout(timeout)
         .with_protocol(protocol)
         .build()
-        .map_err(crate::Error::OtelInit)
+        .map_err(|error| crate::Error::OtelInit(boxed_error(error)))
 }
 
 fn otlp_trace_timeout() -> std::time::Duration {
