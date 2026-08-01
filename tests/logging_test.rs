@@ -62,6 +62,28 @@ fn log_target_path_overrides_dir() {
     assert_eq!(target.file_name, "override.jsonl");
 }
 
+#[cfg(unix)]
+#[test]
+fn initialized_log_file_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let service = "librebar-private-log-test";
+    let date = &logging::format_timestamp()[..10];
+    let log_path = temp.path().join(format!("{service}.jsonl.{date}"));
+    std::fs::write(&log_path, b"existing log\n").unwrap();
+    std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let config =
+        logging::LoggingConfig::from_app_name(service).with_log_dir(Some(temp.path().into()));
+    let guard = logging::init(&config, logging::env_filter(false, 0, "info")).unwrap();
+    tracing::info!("permission check");
+    drop(guard);
+
+    let mode = std::fs::metadata(log_path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+}
+
 // ─── timestamp tests ────────────────────────────────────────────────
 
 #[test]

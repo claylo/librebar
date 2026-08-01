@@ -16,14 +16,66 @@ use librebar::http::{
     ConditionalResponse, HeaderMap, HeaderValue, HttpClient, HttpClientConfig, ModificationCheck,
     RetryPolicy, StatusCode, Validator, Version,
 };
+#[cfg(feature = "logging")]
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::mpsc;
+#[cfg(feature = "logging")]
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+#[cfg(feature = "logging")]
+use tracing::field::{Field, Visit};
+#[cfg(feature = "logging")]
+use tracing_subscriber::layer::SubscriberExt as _;
+
+#[cfg(feature = "logging")]
+#[derive(Clone)]
+struct RequestSpanCapture(Arc<Mutex<Option<BTreeMap<String, String>>>>);
+
+#[cfg(feature = "logging")]
+impl<S> tracing_subscriber::Layer<S> for RequestSpanCapture
+where
+    S: tracing::Subscriber,
+{
+    fn on_new_span(
+        &self,
+        attributes: &tracing::span::Attributes<'_>,
+        _id: &tracing::span::Id,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        if attributes.metadata().name() != "send" {
+            return;
+        }
+
+        let mut visitor = RequestSpanVisitor::default();
+        attributes.record(&mut visitor);
+        *self.0.lock().unwrap() = Some(visitor.fields);
+    }
+}
+
+#[cfg(feature = "logging")]
+#[derive(Default)]
+struct RequestSpanVisitor {
+    fields: BTreeMap<String, String>,
+}
+
+#[cfg(feature = "logging")]
+impl Visit for RequestSpanVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.fields
+            .insert(field.name().to_string(), value.to_string());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.fields
+            .insert(field.name().to_string(), format!("{value:?}"));
+    }
+}
 
 fn read_request(stream: &mut impl Read) -> String {
     let mut request = Vec::new();
@@ -84,6 +136,32 @@ fn response(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     response.extend_from_slice(b"\r\n");
     response.extend_from_slice(body);
     response
+}
+
+#[cfg(feature = "logging")]
+#[tokio::test(flavor = "current_thread")]
+async fn request_span_omits_uri_credentials_and_query() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+
+    let captured = Arc::new(Mutex::new(None));
+    let subscriber = tracing_subscriber::registry().with(RequestSpanCapture(captured.clone()));
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+    let mut config =
+        HttpClientConfig::new("librebar-test", "0.1.0").with_timeout(Duration::from_millis(100));
+    config.retry_policy = RetryPolicy::none();
+    let client = HttpClient::new(config).unwrap();
+    let url = format!("http://alice:hunter2@{address}/private/path?access_token=query-secret");
+
+    assert!(client.get(&url).await.is_err());
+
+    let fields = captured.lock().unwrap().take().unwrap();
+    assert_eq!(
+        fields.get("url").unwrap(),
+        &format!("http://{address}/private/path")
+    );
 }
 
 #[tokio::test]

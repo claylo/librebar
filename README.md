@@ -504,7 +504,7 @@ The logging system finds a writable log directory using this priority:
 4. Platform default:
    - macOS: `~/Library/Logs/{app}/`
    - Linux: `$XDG_STATE_HOME/{app}/logs/`
-5. Current directory
+5. `/var/log` on Unix
 6. stderr (if no writable directory is found)
 
 Where `{APP}` is the uppercased, hyphen-to-underscore app name (e.g., `my-tool` becomes `MY_TOOL_LOG_PATH`).

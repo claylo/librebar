@@ -638,7 +638,7 @@ impl HttpClient {
     /// is inserted when the request does not already contain one.
     #[tracing::instrument(
         skip(self, request),
-        fields(method = %request.method(), url = %request.uri())
+        fields(method = %request.method(), url = %sanitized_uri(request.uri()))
     )]
     pub async fn send(&self, mut request: Request<Bytes>) -> Result<Response> {
         self.prepare_request(&mut request)?;
@@ -755,6 +755,25 @@ fn conditional_request(method: Method, url: &str, validator: &Validator) -> Resu
         .body(Bytes::new())
         .map_err(HttpError::RequestBuild)
         .map_err(Into::into)
+}
+
+fn sanitized_uri(uri: &hyper::Uri) -> String {
+    let mut sanitized = String::new();
+
+    if let Some(scheme) = uri.scheme_str() {
+        sanitized.push_str(scheme);
+        sanitized.push_str("://");
+    }
+    if let Some(host) = uri.host() {
+        sanitized.push_str(host);
+        if let Some(port) = uri.port_u16() {
+            sanitized.push(':');
+            sanitized.push_str(&port.to_string());
+        }
+    }
+    sanitized.push_str(uri.path());
+
+    sanitized
 }
 
 fn clone_request(request: &Request<RequestBody>) -> Result<Request<RequestBody>> {

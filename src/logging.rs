@@ -22,12 +22,11 @@
 //! 4. Platform default — `~/Library/Logs/{app}/` on macOS,
 //!    `$XDG_STATE_HOME/{app}/logs/` on Linux
 //! 5. `/var/log` on Unix
-//! 6. Current working directory (last resort)
-//! 7. stderr fallback if nothing is writable
+//! 6. stderr fallback if nothing is writable
 
 use serde_json::{Map, Value};
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::Event;
 use tracing_subscriber::filter::EnvFilter;
@@ -199,19 +198,7 @@ pub fn resolve_log_target_with(
         return log_target_from_dir(dir, service);
     }
 
-    let mut candidates = Vec::new();
-
-    if let Some(log_dir) = platform_log_dir(service) {
-        candidates.push(log_dir);
-    }
-
-    if cfg!(unix) {
-        candidates.push(PathBuf::from(DEFAULT_LOG_DIR_UNIX));
-    }
-
-    if let Ok(dir) = std::env::current_dir() {
-        candidates.push(dir);
-    }
+    let candidates = default_log_candidates(platform_log_dir(service));
 
     let file_name = format!("{service}{LOG_FILE_SUFFIX}");
 
@@ -222,6 +209,19 @@ pub fn resolve_log_target_with(
     }
 
     Err("No writable log directory found".to_string())
+}
+
+fn default_log_candidates(platform_dir: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(dir) = platform_dir {
+        candidates.push(dir);
+    }
+    if cfg!(unix) {
+        candidates.push(PathBuf::from(DEFAULT_LOG_DIR_UNIX));
+    }
+
+    candidates
 }
 
 /// Resolve the platform-appropriate log directory for a service.
@@ -252,7 +252,7 @@ pub fn format_timestamp() -> String {
 // ─── Internal ───────────────────────────────────────────────────────
 
 /// Build a non-blocking log writer by resolving the log target from env vars
-/// and config, then wrapping a daily-rolling file appender in a non-blocking writer.
+/// and config, then wrapping an owner-only daily appender in a non-blocking writer.
 fn build_log_writer(
     service: &str,
     env_log_path: &str,
@@ -275,7 +275,7 @@ fn build_log_writer(
         config_log_dir.map(PathBuf::from),
     )?;
 
-    let appender = tracing_appender::rolling::daily(&target.dir, &target.file_name);
+    let appender = PrivateDailyAppender::new(target.dir, target.file_name)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
 
     Ok((writer, guard))
@@ -312,13 +312,86 @@ fn ensure_writable(dir: &Path, file_name: &str) -> std::result::Result<(), Strin
         .map_err(|e| format!("Failed to create log directory {}: {e}", dir.display()))?;
 
     let path = dir.join(file_name);
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
+    open_private_append_file(&path)
         .map_err(|e| format!("Failed to open log file {}: {e}", path.display()))?;
 
     Ok(())
+}
+
+struct PrivateDailyAppender {
+    dir: PathBuf,
+    file_name_prefix: String,
+    date: String,
+    file: File,
+}
+
+impl PrivateDailyAppender {
+    fn new(dir: PathBuf, file_name_prefix: String) -> std::result::Result<Self, String> {
+        let date = current_log_date();
+        let file = open_daily_log_file(&dir, &file_name_prefix, &date)?;
+        Ok(Self {
+            dir,
+            file_name_prefix,
+            date,
+            file,
+        })
+    }
+
+    fn rotate_if_needed(&mut self) -> io::Result<()> {
+        let date = current_log_date();
+        if date != self.date {
+            self.file = open_daily_log_file(&self.dir, &self.file_name_prefix, &date)
+                .map_err(io::Error::other)?;
+            self.date = date;
+        }
+        Ok(())
+    }
+}
+
+impl Write for PrivateDailyAppender {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.rotate_if_needed()?;
+        self.file.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+fn current_log_date() -> String {
+    format_timestamp()[..10].to_string()
+}
+
+fn open_daily_log_file(
+    dir: &Path,
+    file_name_prefix: &str,
+    date: &str,
+) -> std::result::Result<File, String> {
+    let path = dir.join(format!("{file_name_prefix}.{date}"));
+    open_private_append_file(&path)
+        .map_err(|error| format!("Failed to open log file {}: {error}", path.display()))
+}
+
+fn open_private_append_file(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+
+    let file = options.open(path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(file)
 }
 
 // ─── JSON Log Layer ─────────────────────────────────────────────────
@@ -475,5 +548,21 @@ impl tracing::field::Visit for JsonVisitor {
             field.name().to_string(),
             Value::String(format!("{value:?}")),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_log_candidates_exclude_the_working_directory() {
+        let platform = PathBuf::from("platform-log-dir");
+        let mut expected = vec![platform.clone()];
+        if cfg!(unix) {
+            expected.push(PathBuf::from(DEFAULT_LOG_DIR_UNIX));
+        }
+
+        assert_eq!(default_log_candidates(Some(platform)), expected);
     }
 }
