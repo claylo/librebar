@@ -99,6 +99,41 @@ async fn cached_get_misses_then_serves_a_fresh_hit_without_network() {
 }
 
 #[tokio::test]
+async fn large_cached_body_has_bounded_storage_overhead() {
+    const BODY_LEN: usize = 1024 * 1024;
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let cache = Cache::new(cache_dir.path());
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        let body = vec![b'x'; BODY_LEN];
+        response("200 OK", &[("Cache-Control", "max-age=3600")], &body)
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let url = format!("http://{address}/large");
+
+    let miss = client.get_cached(&cache, "large", &url).await.unwrap();
+    let stored_len = std::fs::read_dir(cache_dir.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .metadata()
+        .unwrap()
+        .len() as usize;
+    let hit = client.get_cached(&cache, "large", &url).await.unwrap();
+
+    assert_eq!(miss.bytes().len(), BODY_LEN);
+    assert_eq!(hit.cache_status(), Some(CacheStatus::Hit));
+    assert_eq!(hit.bytes().len(), BODY_LEN);
+    assert!(
+        stored_len <= BODY_LEN + 16 * 1024,
+        "{stored_len} bytes stored for a {BODY_LEN}-byte body"
+    );
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
 async fn stale_entry_revalidates_and_losslessly_merges_304_headers() {
     let cache_dir = tempfile::tempdir().unwrap();
     let cache = Cache::new(cache_dir.path());
@@ -335,9 +370,9 @@ async fn corrupt_entry_is_removed_and_refetched() {
 #[tokio::test]
 async fn cache_write_failure_does_not_discard_network_response() {
     let cache_dir = tempfile::tempdir().unwrap();
-    let internal_key = "http:v1:item";
+    let internal_key = "http:v2:item";
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(internal_key);
-    let entry_path = cache_dir.path().join(format!("v1-{encoded}.json"));
+    let entry_path = cache_dir.path().join(format!("v2-{encoded}.cache"));
     let cache = Cache::new(cache_dir.path());
     let (address, requests, server) = spawn_server(1, move |_, _| {
         std::fs::create_dir(&entry_path).unwrap();
@@ -522,7 +557,7 @@ async fn vary_cookie_uses_fingerprints_without_persisting_cookie_values() {
         .get_cached(&cache, "profile", &format!("{base}/profile"))
         .await
         .unwrap();
-    let stored = cache.get("http:v1:profile").unwrap().unwrap();
+    let stored = cache.get("http:v2:profile").unwrap().unwrap();
     assert!(
         !stored
             .windows(b"session=one".len())

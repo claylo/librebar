@@ -7,6 +7,11 @@ use tempfile::TempDir;
 
 use base64::Engine as _;
 
+fn cache_entry_path(dir: &std::path::Path, key: &str) -> std::path::PathBuf {
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes());
+    dir.join(format!("v2-{encoded}.cache"))
+}
+
 #[test]
 fn store_and_retrieve() {
     let tmp = TempDir::new().unwrap();
@@ -16,6 +21,40 @@ fn store_and_retrieve() {
         .unwrap();
     let result = cache.get("key1").unwrap();
     assert_eq!(result.as_deref(), Some(b"value1".as_ref()));
+}
+
+#[test]
+fn cache_file_stores_the_raw_binary_value() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    let value = (0_u8..=255).cycle().take(4096).collect::<Vec<_>>();
+
+    cache
+        .set("binary", &value, Duration::from_secs(60))
+        .unwrap();
+
+    let stored = std::fs::read(cache_entry_path(tmp.path(), "binary")).unwrap();
+    assert_eq!(stored.len(), value.len() + 16);
+    assert_eq!(&stored[16..], value);
+    assert_eq!(cache.get("binary").unwrap().unwrap(), value);
+}
+
+#[test]
+fn malformed_cache_header_is_a_format_error() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    std::fs::write(
+        cache_entry_path(tmp.path(), "broken"),
+        b"not a cache header",
+    )
+    .unwrap();
+
+    let error = cache.get("broken").unwrap_err();
+
+    assert!(
+        error.to_string().contains("invalid cache entry format"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -105,8 +144,7 @@ fn cache_set_replaces_symlink_without_following_it() {
     let target = tmp.path().join("target");
     std::fs::write(&target, b"keep me").unwrap();
 
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"key");
-    let entry = tmp.path().join(format!("v1-{encoded}.json"));
+    let entry = cache_entry_path(tmp.path(), "key");
     symlink(&target, &entry).unwrap();
 
     cache
@@ -148,8 +186,7 @@ fn cache_set_forces_private_permissions() {
 fn cache_set_refuses_to_replace_a_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = Cache::new(tmp.path());
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"key");
-    std::fs::create_dir(tmp.path().join(format!("v1-{encoded}.json"))).unwrap();
+    std::fs::create_dir(cache_entry_path(tmp.path(), "key")).unwrap();
 
     cache
         .set("key", b"value", Duration::from_secs(60))

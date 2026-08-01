@@ -186,6 +186,9 @@ pub enum CacheError {
     /// Base64 decoding error.
     #[error("decode: {0}")]
     Decode(#[from] base64::DecodeError),
+    /// Invalid or unsupported on-disk cache framing.
+    #[error("invalid cache entry format: {0}")]
+    Format(String),
 }
 
 /// Errors from config file parsing.

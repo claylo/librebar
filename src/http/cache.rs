@@ -16,6 +16,9 @@ use crate::{Error, Result};
 
 const SENSITIVE_REQUEST_HEADERS: [HeaderName; 3] =
     [AUTHORIZATION, PROXY_AUTHORIZATION, hyper::header::COOKIE];
+const HTTP_CACHE_MAGIC: &[u8; 8] = b"LBRHT02\0";
+const HTTP_CACHE_FOOTER_LEN: usize = 16;
+const HTTP_CACHE_FORMAT_VERSION: u8 = 2;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct StoredHeader {
@@ -78,6 +81,7 @@ struct CachedResponse {
     version: StoredVersion,
     headers: LosslessHeaders,
     trailers: Option<LosslessHeaders>,
+    #[serde(skip)]
     body: Vec<u8>,
 }
 
@@ -154,6 +158,10 @@ impl From<StoredVersion> for Version {
 
 #[derive(Debug, thiserror::Error)]
 enum CacheEntryError {
+    #[error("invalid cached entry framing: {0}")]
+    Format(&'static str),
+    #[error("invalid cached entry metadata: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("invalid cached header name: {0}")]
     HeaderName(#[from] hyper::header::InvalidHeaderName),
     #[error("invalid cached header value: {0}")]
@@ -166,6 +174,37 @@ enum CacheEntryError {
     UnsupportedVersion(String),
     #[error("unsupported cache entry format version: {0}")]
     UnsupportedFormat(u8),
+}
+
+fn decode_entry(mut bytes: Vec<u8>) -> std::result::Result<CachedHttpEntry, CacheEntryError> {
+    if bytes.len() < HTTP_CACHE_FOOTER_LEN {
+        return Err(CacheEntryError::Format("truncated footer"));
+    }
+
+    let magic_start = bytes.len() - HTTP_CACHE_MAGIC.len();
+    if &bytes[magic_start..] != HTTP_CACHE_MAGIC {
+        return Err(CacheEntryError::Format("unsupported magic or version"));
+    }
+    let length_start = magic_start - std::mem::size_of::<u64>();
+    let metadata_len = u64::from_be_bytes(
+        bytes[length_start..magic_start]
+            .try_into()
+            .expect("metadata length occupies eight bytes"),
+    );
+    let metadata_len = usize::try_from(metadata_len)
+        .map_err(|_| CacheEntryError::Format("metadata length exceeds platform limits"))?;
+    let metadata_start = length_start
+        .checked_sub(metadata_len)
+        .ok_or(CacheEntryError::Format("metadata length exceeds payload"))?;
+
+    let mut entry: CachedHttpEntry = serde_json::from_slice(&bytes[metadata_start..length_start])?;
+    if entry.format_version != HTTP_CACHE_FORMAT_VERSION {
+        return Err(CacheEntryError::UnsupportedFormat(entry.format_version));
+    }
+    bytes.truncate(metadata_start);
+    entry.response.body = bytes;
+    entry.response.validate()?;
+    Ok(entry)
 }
 
 fn fingerprint_credentials(headers: &mut HeaderMap) {
@@ -201,7 +240,7 @@ fn restore_wire_credentials(policy_headers: &mut HeaderMap, wire_headers: &Heade
 }
 
 fn namespaced_key(caller_key: &str) -> String {
-    format!("http:v1:{caller_key}")
+    format!("http:v2:{caller_key}")
 }
 
 fn fresh_response(
@@ -380,12 +419,7 @@ fn load_entry(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
     let namespaced = namespaced_key(key);
     let bytes = match cache.get(&namespaced) {
         Ok(bytes) => bytes,
-        Err(Error::Cache(CacheError::Json(error))) => {
-            tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
-            let _ = cache.remove(&namespaced);
-            return Ok(None);
-        }
-        Err(Error::Cache(CacheError::Decode(error))) => {
+        Err(Error::Cache(CacheError::Format(error))) => {
             tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
             let _ = cache.remove(&namespaced);
             return Ok(None);
@@ -396,19 +430,7 @@ fn load_entry(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntry>> {
         return Ok(None);
     };
 
-    let parsed = serde_json::from_slice::<CachedHttpEntry>(&bytes);
-    match parsed.and_then(|entry| {
-        if entry.format_version != 1 {
-            return Err(serde_json::Error::io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                CacheEntryError::UnsupportedFormat(entry.format_version),
-            )));
-        }
-        entry.response.validate().map_err(|error| {
-            serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-        })?;
-        Ok(entry)
-    }) {
+    match decode_entry(bytes) {
         Ok(entry) => Ok(Some(entry)),
         Err(error) => {
             tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
@@ -481,7 +503,8 @@ async fn revalidate(
                 response_time,
                 private_cache_options(),
             );
-            persist_cached_response(client, cache, key, &policy, &cached, response_time);
+            let cached =
+                persist_cached_response(client, cache, key, &policy, cached, response_time);
             fresh_response(cached, &calculated_parts.headers, CacheStatus::Revalidated)
                 .map_err(corrupt_cache_error)
         }
@@ -545,7 +568,9 @@ fn persist_entry(
     now: SystemTime,
 ) {
     match CachedResponse::try_from(response) {
-        Ok(cached) => persist_cached_response(client, cache, key, policy, &cached, now),
+        Ok(cached) => {
+            let _ = persist_cached_response(client, cache, key, policy, cached, now);
+        }
         Err(error) => tracing::warn!(key, error = %error, "failed to encode HTTP cache response"),
     }
 }
@@ -555,33 +580,35 @@ fn persist_cached_response(
     cache: &Cache,
     key: &str,
     policy: &CachePolicy,
-    response: &CachedResponse,
+    response: CachedResponse,
     now: SystemTime,
-) {
+) -> CachedResponse {
     let entry = CachedHttpEntry {
-        format_version: 1,
+        format_version: HTTP_CACHE_FORMAT_VERSION,
         policy: policy.clone(),
-        response: CachedResponse {
-            status: response.status,
-            version: response.version,
-            headers: response.headers.clone(),
-            trailers: response.trailers.clone(),
-            body: response.body.clone(),
-        },
+        response,
     };
-    let encoded = match serde_json::to_vec(&entry) {
-        Ok(encoded) => encoded,
+    let metadata = match serde_json::to_vec(&entry) {
+        Ok(metadata) => metadata,
         Err(error) => {
             tracing::warn!(key, error = %error, "failed to serialize HTTP cache entry");
-            return;
+            return entry.response;
         }
     };
+    let metadata_len = (metadata.len() as u64).to_be_bytes();
     let ttl = policy
         .time_to_live(now)
         .saturating_add(client.config().http_cache_stale_retention);
-    if let Err(error) = cache.set(&namespaced_key(key), &encoded, ttl) {
+    let parts: [&[u8]; 4] = [
+        entry.response.body.as_slice(),
+        metadata.as_slice(),
+        &metadata_len,
+        HTTP_CACHE_MAGIC,
+    ];
+    if let Err(error) = cache.set_parts(&namespaced_key(key), &parts, ttl) {
         tracing::warn!(key, error = %error, "failed to persist HTTP cache entry");
     }
+    entry.response
 }
 
 fn corrupt_cache_error(error: impl std::fmt::Display) -> Error {
@@ -682,7 +709,7 @@ mod tests {
 
     #[test]
     fn cache_keys_are_namespaced() {
-        assert_eq!(namespaced_key("item"), "http:v1:item");
+        assert_eq!(namespaced_key("item"), "http:v2:item");
     }
 
     #[test]
