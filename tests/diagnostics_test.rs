@@ -1,8 +1,32 @@
 #![allow(missing_docs)]
 #![cfg(feature = "diagnostics")]
 
-use librebar::diagnostics::{CheckResult, CheckStatus, DebugBundle, DoctorCheck, DoctorRunner};
+use librebar::diagnostics::{
+    CheckResult, CheckStatus, DebugBundle, DoctorCheck, DoctorRunner, Redactor,
+};
+use std::io::Read;
+use std::path::Path;
 use tempfile::TempDir;
+
+fn read_archive_entry(archive_path: &Path, name: &str) -> (Vec<u8>, u32) {
+    let file = std::fs::File::open(archive_path).unwrap();
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        if entry.path().unwrap().as_ref() != Path::new(name) {
+            continue;
+        }
+
+        let mode = entry.header().mode().unwrap();
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content).unwrap();
+        return (content, mode);
+    }
+
+    panic!("archive entry not found: {name}");
+}
 
 struct AlwaysPassCheck;
 
@@ -39,6 +63,14 @@ impl DoctorCheck for AlwaysFailCheck {
             status: CheckStatus::Error,
             message: "Something is wrong".to_string(),
         }
+    }
+}
+
+struct FixedRedactor;
+
+impl Redactor for FixedRedactor {
+    fn redact(&self, _name: &str, _data: &[u8]) -> Vec<u8> {
+        b"custom-redaction".to_vec()
     }
 }
 
@@ -79,6 +111,105 @@ fn debug_bundle_creates_archive() {
     let archive_path = bundle.finish().unwrap();
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".tar.gz"));
+}
+
+#[test]
+fn debug_bundle_redacts_sensitive_values_from_text_formats() {
+    let tmp = TempDir::new().unwrap();
+    let mut bundle = DebugBundle::new("test-app", tmp.path());
+    let cases = [
+        (
+            "config.json",
+            r#"{"items":[{"api_key":"json-secret"},{"token":"json-secret"}],"safe":"json-visible"}"#,
+            "json-secret",
+            "json-visible",
+        ),
+        (
+            "config.toml",
+            "password = \"toml-secret\"\nsafe = \"toml-visible\"\n",
+            "toml-secret",
+            "toml-visible",
+        ),
+        (
+            "config.yaml",
+            "nested:\n  client_secret: yaml-secret\nsafe: yaml-visible\n",
+            "yaml-secret",
+            "yaml-visible",
+        ),
+        (
+            "service.env",
+            "AUTHORIZATION=Bearer dotenv-secret\nSAFE=dotenv-visible\n",
+            "dotenv-secret",
+            "dotenv-visible",
+        ),
+        (
+            "app.jsonl",
+            "{\"message\":\"request\",\"authorization\":\"Bearer log-secret\"}\n{\"safe\":\"log-visible\"}\n",
+            "log-secret",
+            "log-visible",
+        ),
+        (
+            "notes.txt",
+            "endpoint=https://alice:hunter2@example.com\nsafe=value-visible\n",
+            "alice:hunter2",
+            "value-visible",
+        ),
+    ];
+
+    for (name, content, _, _) in cases {
+        bundle.add_text(name, content);
+    }
+
+    let archive_path = bundle.finish().unwrap();
+    for (name, _, secret, visible) in cases {
+        let (content, _) = read_archive_entry(&archive_path, name);
+        let content = String::from_utf8(content).unwrap();
+        assert!(
+            !content.contains(secret),
+            "{name} leaked {secret}: {content}"
+        );
+        assert!(content.contains("[REDACTED]"), "{name}: {content}");
+        assert!(content.contains(visible), "{name}: {content}");
+    }
+}
+
+#[test]
+fn debug_bundle_accepts_a_custom_redactor() {
+    let tmp = TempDir::new().unwrap();
+    let mut bundle = DebugBundle::new("test-app", tmp.path()).with_redactor(FixedRedactor);
+    bundle.add_bytes("opaque.bin", b"private bytes");
+
+    let archive_path = bundle.finish().unwrap();
+    let (content, _) = read_archive_entry(&archive_path, "opaque.bin");
+    assert_eq!(content, b"custom-redaction");
+}
+
+#[cfg(unix)]
+#[test]
+fn debug_bundle_archive_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tmp = TempDir::new().unwrap();
+    let mut bundle = DebugBundle::new("test-app", tmp.path());
+    bundle.add_text("info.txt", "safe content");
+
+    let archive_path = bundle.finish().unwrap();
+    let mode = std::fs::metadata(archive_path)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+}
+
+#[test]
+fn debug_bundle_entries_are_owner_only() {
+    let tmp = TempDir::new().unwrap();
+    let mut bundle = DebugBundle::new("test-app", tmp.path());
+    bundle.add_text("info.txt", "safe content");
+
+    let archive_path = bundle.finish().unwrap();
+    let (_, mode) = read_archive_entry(&archive_path, "info.txt");
+    assert_eq!(mode & 0o777, 0o600);
 }
 
 #[test]

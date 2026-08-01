@@ -26,6 +26,7 @@
 //! assert!(report.contains("config"));
 //! ```
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -187,12 +188,284 @@ impl Default for DoctorRunner {
 
 // ─── Debug Bundle ──────────────────────────────────────────────────
 
+const REDACTED: &str = "[REDACTED]";
+
+/// Redacts one prospective debug-bundle entry before it is retained.
+///
+/// Implement this trait when an application has schema-specific secrets or
+/// needs to inspect binary formats. [`DebugBundle`] uses [`SecretRedactor`]
+/// unless a replacement is installed with [`DebugBundle::with_redactor`].
+pub trait Redactor: Send + Sync {
+    /// Return the content that may be written to the named archive entry.
+    fn redact(&self, name: &str, data: &[u8]) -> Vec<u8>;
+}
+
+/// Default redactor for common structured-text secret fields.
+///
+/// JSON, JSON Lines, TOML, and YAML are parsed before matching keys. Other
+/// UTF-8 content is treated as assignment-style text, including dotenv files.
+/// Values whose keys identify passwords, secrets, tokens, authorization,
+/// credentials, connection strings, database URLs, or private keys become
+/// `[REDACTED]`. A second pass detects recognizable credential values such as
+/// provider tokens, JWTs, inline URL credentials, and private keys without
+/// broadly removing diagnostic identifiers such as email and IP addresses.
+///
+/// Non-UTF-8 data is returned unchanged; applications that bundle opaque
+/// binary formats should install a format-aware [`Redactor`].
+pub struct SecretRedactor {
+    values: leakguard::Redactor,
+}
+
+impl fmt::Debug for SecretRedactor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecretRedactor")
+    }
+}
+
+impl Default for SecretRedactor {
+    fn default() -> Self {
+        use leakguard::{Kind, Mask};
+
+        let values = leakguard::Redactor::only(&[
+            Kind::Jwt,
+            Kind::AwsAccessKey,
+            Kind::UrlCredentials,
+            Kind::GitHubToken,
+            Kind::SlackToken,
+            Kind::StripeKey,
+            Kind::GoogleApiKey,
+            Kind::OpenAiKey,
+            Kind::PrivateKey,
+            Kind::AzureConnectionString,
+            Kind::TelegramToken,
+            Kind::DiscordToken,
+        ])
+        .mask(Mask::fixed(REDACTED));
+
+        Self { values }
+    }
+}
+
+impl Redactor for SecretRedactor {
+    fn redact(&self, name: &str, data: &[u8]) -> Vec<u8> {
+        let Ok(text) = std::str::from_utf8(data) else {
+            return data.to_vec();
+        };
+
+        let redacted =
+            redact_structured_text(name, text).unwrap_or_else(|| redact_assignment_text(text));
+        self.values.clean(&redacted).into_bytes()
+    }
+}
+
+fn redact_structured_text(name: &str, text: &str) -> Option<String> {
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "json" => {
+            let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
+            if !redact_value(&mut value) {
+                return Some(text.to_string());
+            }
+            serde_json::to_string_pretty(&value).ok()
+        }
+        "jsonl" => Some(redact_json_lines(text)),
+        "toml" => {
+            let mut value: serde_json::Value = toml::from_str(text).ok()?;
+            if !redact_value(&mut value) {
+                return Some(text.to_string());
+            }
+            toml::to_string_pretty(&value).ok()
+        }
+        "yaml" | "yml" => {
+            let mut value: serde_json::Value = serde_saphyr::from_str(text).ok()?;
+            if !redact_value(&mut value) {
+                return Some(text.to_string());
+            }
+            serde_saphyr::to_string(&value).ok()
+        }
+        _ => None,
+    }
+}
+
+fn redact_json_lines(text: &str) -> String {
+    let mut redacted = String::with_capacity(text.len());
+
+    for chunk in text.split_inclusive('\n') {
+        let (line, newline) = chunk
+            .strip_suffix('\n')
+            .map_or((chunk, ""), |line| (line, "\n"));
+        let output = serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|mut value| {
+                redact_value(&mut value)
+                    .then(|| serde_json::to_string(&value).ok())
+                    .flatten()
+            })
+            .unwrap_or_else(|| redact_assignment_line(line));
+        redacted.push_str(&output);
+        redacted.push_str(newline);
+    }
+
+    redacted
+}
+
+fn redact_value(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(values) => {
+            let mut changed = false;
+            for (key, value) in values {
+                if is_sensitive_key(key) {
+                    *value = serde_json::Value::String(REDACTED.to_string());
+                    changed = true;
+                } else {
+                    changed |= redact_value(value);
+                }
+            }
+            changed
+        }
+        serde_json::Value::Array(values) => {
+            let mut changed = false;
+            for value in values {
+                changed |= redact_value(value);
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
+fn redact_assignment_text(text: &str) -> String {
+    let mut redacted = String::with_capacity(text.len());
+
+    for chunk in text.split_inclusive('\n') {
+        let (line, newline) = chunk
+            .strip_suffix('\n')
+            .map_or((chunk, ""), |line| (line, "\n"));
+        redacted.push_str(&redact_assignment_line(line));
+        redacted.push_str(newline);
+    }
+
+    redacted
+}
+
+fn redact_assignment_line(line: &str) -> String {
+    let Some((separator_index, separator)) = line
+        .char_indices()
+        .find(|(_, character)| matches!(character, ':' | '='))
+    else {
+        return line.to_string();
+    };
+
+    let key = line[..separator_index]
+        .trim()
+        .trim_start_matches('-')
+        .trim()
+        .trim_matches(['\'', '"']);
+    if !is_sensitive_key(key) {
+        return line.to_string();
+    }
+
+    let has_trailing_comma = line[separator_index + separator.len_utf8()..]
+        .trim_end()
+        .ends_with(',');
+    format!(
+        "{}{} \"{REDACTED}\"{}",
+        &line[..separator_index],
+        separator,
+        if has_trailing_comma { "," } else { "" }
+    )
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut previous_was_lowercase = false;
+
+    for character in key.chars() {
+        if !character.is_ascii_alphanumeric() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            previous_was_lowercase = false;
+            continue;
+        }
+
+        if character.is_ascii_uppercase() && previous_was_lowercase && !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+        current.push(character.to_ascii_lowercase());
+        previous_was_lowercase = character.is_ascii_lowercase();
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+
+    if words.iter().any(|word| {
+        matches!(
+            word.as_str(),
+            "authorization"
+                | "credential"
+                | "credentials"
+                | "passwd"
+                | "password"
+                | "secret"
+                | "token"
+        )
+    }) {
+        return true;
+    }
+
+    if words.last().is_some_and(|word| word == "key") {
+        return true;
+    }
+
+    let compact = words.concat();
+    matches!(compact.as_str(), "connectionstring" | "databaseurl")
+}
+
+fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+
+    let file = options.open(path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(file)
+}
+
 /// Builder for diagnostic debug bundles (tar.gz archives).
-#[derive(Debug)]
 pub struct DebugBundle {
     app_name: String,
     dir: PathBuf,
     files: Vec<(String, Vec<u8>)>,
+    redactor: Box<dyn Redactor>,
+}
+
+impl fmt::Debug for DebugBundle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DebugBundle")
+            .field("app_name", &self.app_name)
+            .field("dir", &self.dir)
+            .field("files", &self.files)
+            .field("redactor", &"<redactor>")
+            .finish()
+    }
 }
 
 impl DebugBundle {
@@ -204,19 +477,28 @@ impl DebugBundle {
             app_name: app_name.to_string(),
             dir: dir.to_path_buf(),
             files: Vec::new(),
+            redactor: Box::new(SecretRedactor::default()),
         }
     }
 
-    /// Add a text file to the bundle.
-    pub fn add_text(&mut self, name: &str, content: &str) -> &mut Self {
-        self.files
-            .push((name.to_string(), content.as_bytes().to_vec()));
+    /// Replace the default redactor.
+    ///
+    /// Install the redactor before adding entries. Existing entries have
+    /// already been processed by the redactor that was active when added.
+    pub fn with_redactor(mut self, redactor: impl Redactor + 'static) -> Self {
+        self.redactor = Box::new(redactor);
         self
     }
 
-    /// Add a binary file to the bundle.
+    /// Add a text file to the bundle after redaction.
+    pub fn add_text(&mut self, name: &str, content: &str) -> &mut Self {
+        self.add_bytes(name, content.as_bytes())
+    }
+
+    /// Add a binary file to the bundle after redaction.
     pub fn add_bytes(&mut self, name: &str, data: &[u8]) -> &mut Self {
-        self.files.push((name.to_string(), data.to_vec()));
+        let data = self.redactor.redact(name, data);
+        self.files.push((name.to_string(), data));
         self
     }
 
@@ -238,14 +520,14 @@ impl DebugBundle {
         let filename = format!("{}-debug-{timestamp}.tar.gz", self.app_name);
         let path = self.dir.join(&filename);
 
-        let file = std::fs::File::create(&path).map_err(Error::Diagnostic)?;
+        let file = create_private_file(&path).map_err(Error::Diagnostic)?;
         let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
         let mut archive = tar::Builder::new(encoder);
 
         for (name, data) in &self.files {
             let mut header = tar::Header::new_gnu();
             header.set_size(data.len() as u64);
-            header.set_mode(0o644);
+            header.set_mode(0o600);
             header.set_cksum();
             archive
                 .append_data(&mut header, name, data.as_slice())

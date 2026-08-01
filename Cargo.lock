@@ -1242,6 +1242,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "leakguard"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0eeb52dda0c35b04742d9ce5f600550dfb397190f21bd22b86113aa721cbc5d9"
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1269,6 +1275,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
+ "leakguard",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
