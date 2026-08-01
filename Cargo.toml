@@ -31,6 +31,8 @@ thiserror = "2.0"
 
 # Feature: cli
 clap = { version = "4.6", features = ["derive"], optional = true }
+clap_complete = { version = "4.6", optional = true }
+clap_mangen = { version = "0.3", optional = true }
 owo-colors = { version = "4.3", features = ["supports-colors"], optional = true }
 
 # Feature: config
@@ -119,7 +121,7 @@ path = "examples/plugin-cli/hello-greet/main.rs"
 required-features = ["cli"]
 
 [features]
-cli = ["dep:clap", "dep:owo-colors"]
+cli = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:owo-colors", "dep:serde_json"]
 config = ["dep:toml", "dep:serde-saphyr", "dep:serde_json", "dep:camino", "dep:directories"]
 logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:serde_json", "dep:directories"]
 shutdown = ["dep:tokio"]

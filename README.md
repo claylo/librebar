@@ -15,7 +15,7 @@ struct Config {
 }
 
 #[derive(Parser)]
-#[command(name = "myapp", about = "Does useful things")]
+#[command(name = "myapp", version, about = "Does useful things")]
 struct Cli {
     #[command(flatten)]
     pub common: librebar::cli::CommonArgs,
@@ -30,7 +30,7 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = librebar::cli::parse::<Cli>();
 
     // Applies color, answers --version-only, honors -C. Returns Exit when a
     // flag was a complete request in itself.
@@ -72,7 +72,7 @@ No default features. You opt into exactly what you need.
 
 | Feature | What it does |
 |---------|-------------|
-| `cli` | `CommonArgs` with `--quiet`, `-v`, `--json`, `--color`, `-C`, `--version-only` |
+| `cli` | Typed output selection, CLI Spec schema, and shared Clap arguments |
 | `config` | Layered config discovery, deep merge, TOML/YAML/JSON parsing |
 | `logging` | JSONL structured logging with daily rotation and platform-aware log directories |
 | `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
@@ -132,7 +132,7 @@ This gives every librebar-based app a consistent set of flags:
 |------|-------|--------|
 | `--quiet` | `-q` | Only print errors |
 | `--verbose` | `-v` | More detail (repeatable: `-vv` for trace) |
-| `--json` | | Output as JSON for scripting |
+| `--format` | | `auto`, `text`, or `json` output |
 | `--color` | | `auto`, `always`, or `never` |
 | `--chdir` | `-C` | Run as if started in a different directory |
 | `--version-only` | | Print version number and exit |
@@ -140,6 +140,20 @@ This gives every librebar-based app a consistent set of flags:
 All of them are `global`, so they are accepted on any subcommand as well as at
 the root. `myapp sub --version-only` prints the version and exits without
 running `sub`.
+
+`--format auto` resolves to text when stdout is a terminal and JSON when it is
+redirected. An explicit format always wins. Use the typed result instead of
+branching on a boolean:
+
+```rust
+match cli.common.output_format() {
+    librebar::cli::ResolvedOutputFormat::Text => println!("human output"),
+    librebar::cli::ResolvedOutputFormat::Json => println!(r#"{{"mode":"json"}}"#),
+}
+```
+
+The old `--json` spelling remains accepted as a hidden compatibility alias for
+`--format json`. Passing both selectors is an error.
 
 That reserves `-q`, `-v` and `-C` across your whole command tree. Redeclaring
 one in a subcommand is a clap conflict, and clap reports it as a panic on first
@@ -154,6 +168,77 @@ if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
     return Ok(());
 }
 ```
+
+### Machine-readable schema
+
+Use librebar's parser instead of calling Clap directly:
+
+```rust
+let cli = librebar::cli::parse::<Cli>();
+```
+
+It adds a visible `schema` subcommand and handles it before configuration,
+logging, authentication, or network startup. `myapp schema` emits a CLI Spec
+v0.2 document generated from the built Clap command tree. Large CLIs can narrow
+the result with a path such as `myapp schema widgets list`.
+
+Clap supplies command paths, descriptions, arguments, defaults, enums, value
+hints, groups, aliases, and conflicts. It cannot know whether a command mutates
+state or what its JSON and errors mean. Supply those facts explicitly:
+
+```rust
+let metadata = librebar::cli::SchemaMetadata::new()
+    .command(
+        "widgets list",
+        librebar::cli::CommandMetadata::new()
+            .mutating(false)
+            .stability(librebar::cli::Stability::Stable)
+            .output_field(librebar::cli::OutputField::new("id", "string")),
+    )
+    .error(
+        librebar::cli::ErrorMetadata::new("not_found")
+            .exit_code(4)
+            .retryable(false),
+    );
+let cli = librebar::cli::parse_with::<Cli>(metadata);
+```
+
+Metadata must name a real command path, and error/outcome exit codes may not
+overlap. Librebar rejects either mistake rather than publishing a quietly
+incomplete contract. The root Clap command should use `#[command(version)]`;
+alternatively, provide the application version through
+`SchemaMetadata::version`.
+
+This is a compliance-capable foundation, not an automatic compliance claim.
+Applications still have to honor the selected format, emit declared structured
+errors, keep data on stdout and diagnostics on stderr, and satisfy the CLI
+Spec's behavioral rules.
+
+### Completions and manpages
+
+The same parse path also installs `completions <SHELL>` using Clap's official
+generator. Bash, Elvish, Fish, PowerShell, and Zsh are supported without
+application-specific wiring:
+
+```bash
+myapp completions zsh > _myapp
+myapp completions bash > myapp.bash
+```
+
+For packaging, render one page or generate the complete visible command tree
+through `clap_mangen`:
+
+```rust
+let mut page = Vec::new();
+librebar::cli::render_manpage::<Cli>(&mut page)?;
+
+let paths = librebar::cli::generate_manpages::<Cli>("target/man")?;
+```
+
+Nested filenames contain the full path (`myapp-widgets-list.1`), preventing
+same-named leaves in different command groups from overwriting each other.
+Both outputs include librebar-owned commands because schema, help, completions,
+and manpages all come from the same augmented `clap::Command`.
 
 `apply` sets the color override, prints the version and returns
 `Startup::Exit` if `--version-only` was passed, and changes directory for

@@ -83,6 +83,7 @@ impl Default for Config {
 #[derive(Parser)]
 #[command(
     name = "updater",
+    version,
     about = "GitHub release check with 24h cache and env suppression"
 )]
 struct Cli {
@@ -108,7 +109,7 @@ enum Command {
 // `rt-multi-thread` anyway.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = librebar::cli::parse::<Cli>();
     // One call: color override, --version-only, and -C. `Startup` is
     // #[must_use], so the early return cannot be forgotten silently.
     if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {

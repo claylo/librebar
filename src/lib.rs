@@ -13,7 +13,7 @@
 //!
 //! | Feature | Module | Use when your app needs... |
 //! |---------|--------|---------------------------|
-//! | `cli` | [`cli`] | Clap-based CLI with `--quiet`, `--verbose`, `--color`, `--json` flags |
+//! | `cli` | [`cli`] | Clap CLI with typed output selection and CLI Spec introspection |
 //! | `config` | [`config`] | Multi-format config discovery (TOML/YAML/JSON) with layered merge |
 //! | `logging` | [`logging`] | Structured JSONL file logging with rotation |
 //! | `shutdown` | [`shutdown`] | Graceful shutdown with SIGINT/SIGTERM handling |
@@ -89,6 +89,7 @@
 //! # struct Config {}
 //!
 //! #[derive(Parser)]
+//! #[command(version)]
 //! struct Cli {
 //!     #[command(flatten)]
 //!     pub common: librebar::cli::CommonArgs,
@@ -100,7 +101,7 @@
 //! # enum Commands { Run }
 //! #
 //! # fn main() -> librebar::Result<()> {
-//! let cli = Cli::parse();
+//! let cli = librebar::cli::parse::<Cli>();
 //!
 //! let app = librebar::init(env!("CARGO_PKG_NAME"))
 //!     .with_version(env!("CARGO_PKG_VERSION"))
@@ -485,13 +486,14 @@ macro_rules! builder_methods {
 /// # struct Config {}
 /// #
 /// # #[derive(Parser)]
+/// # #[command(version)]
 /// # struct Cli {
 /// #     #[command(flatten)]
 /// #     pub common: librebar::cli::CommonArgs,
 /// # }
 /// #
 /// # fn main() -> librebar::Result<()> {
-/// # let cli = Cli::parse();
+/// # let cli = librebar::cli::parse::<Cli>();
 /// let app = librebar::init(env!("CARGO_PKG_NAME"))
 ///     .with_cli(cli.common)
 ///     .config::<Config>()
@@ -740,6 +742,7 @@ const fn default_cli() -> cli::CommonArgs {
         quiet: false,
         verbose: 0,
         color: cli::ColorChoice::Auto,
-        json: false,
+        format: cli::OutputFormat::Auto,
+        legacy_json: false,
     }
 }

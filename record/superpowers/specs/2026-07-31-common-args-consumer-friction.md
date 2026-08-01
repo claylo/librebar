@@ -1,6 +1,6 @@
 # CommonArgs: consumer friction ledger
 
-**Status:** partially implemented (items 1–7 shipped, 8 open)
+**Status:** implemented (items 1–8 shipped)
 **Date:** 2026-07-31
 
 Every defect below was found the same way: a real consumer wired `CommonArgs`
@@ -156,7 +156,7 @@ makes the collision expensive to diagnose.
 
 ---
 
-## Open
+## Shipped 2026-07-31
 
 ### 8. `CommonArgs` derives `Parser`, not `Args`
 
@@ -164,9 +164,10 @@ makes the collision expensive to diagnose.
 a standalone command named after librebar. That's meaningless for a
 flatten-only type. `Args` is the semantically correct derive.
 
-Left alone for now: `#[derive(Parser)]` also emits the `Args` impl, so flatten
-works either way, and narrowing it would break any consumer calling
-`CommonArgs::parse()`. Worth doing at the next breaking release, not before.
+**Fixed:** `CommonArgs` now derives `Args + Clone + Debug`. The help-text guard
+remains because the doc-comment leak comes from `Args::augment_args`, not the
+old `Parser` derive. Repository and known-consumer searches found no
+`CommonArgs::parse()` callers, and crates.io reports zero reverse dependencies.
 
 ---
 

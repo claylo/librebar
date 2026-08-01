@@ -1,15 +1,32 @@
 //! CLI argument types shared across librebar-based applications.
 //!
-//! Provides [`CommonArgs`] for standard flags (quiet, verbose, json, color, chdir)
-//! and [`ColorChoice`] for terminal color configuration. Consumers embed these
-//! into their own clap-derived structs via `#[command(flatten)]`.
+//! Provides [`CommonArgs`] for standard flags and typed output/color choices.
+//! Consumers embed these into their own clap-derived structs via
+//! `#[command(flatten)]`.
 //!
 //! After parsing, call [`CommonArgs::apply`] once. It performs every startup
 //! side effect these flags imply, in the order they have to happen in, and
 //! reports whether the process should keep going.
+//!
+//! Prefer [`parse`] over `clap::Parser::parse`: it adds machine-readable CLI
+//! Spec introspection and stable shell completions before normal application
+//! startup. [`generate_manpages`] renders the same augmented command tree for
+//! release packaging.
 
 use clap::Args;
+use std::io::IsTerminal;
 use std::path::PathBuf;
+
+mod artifacts;
+mod parse;
+mod schema;
+
+pub use artifacts::{ArtifactError, generate_manpages, render_manpage};
+pub use parse::{ParseOutcome, command, parse, parse_with, try_parse_from};
+pub use schema::{
+    CLI_SPEC_VERSION, CommandExample, CommandMetadata, ErrorMetadata, OutcomeMetadata, OutputField,
+    SchemaDocument, SchemaError, SchemaMetadata, Stability, schema_for,
+};
 
 /// Color output preference.
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
@@ -34,6 +51,42 @@ impl ColorChoice {
             Self::Never => owo_colors::set_override(false),
         }
     }
+}
+
+/// Output format requested by the user.
+///
+/// [`Self::Auto`] preserves the distinction between an explicit format and
+/// terminal detection. Applications should render using the resolved value
+/// returned by [`CommonArgs::output_format`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputFormat {
+    /// Use text on a terminal and JSON when stdout is redirected.
+    #[default]
+    Auto,
+    /// Human-readable text.
+    Text,
+    /// Machine-readable JSON.
+    Json,
+}
+
+impl OutputFormat {
+    /// Resolve this request for a known stdout terminal state.
+    pub const fn resolve_for(self, stdout_is_terminal: bool) -> ResolvedOutputFormat {
+        match self {
+            Self::Auto if stdout_is_terminal => ResolvedOutputFormat::Text,
+            Self::Auto | Self::Json => ResolvedOutputFormat::Json,
+            Self::Text => ResolvedOutputFormat::Text,
+        }
+    }
+}
+
+/// Concrete output format after terminal detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedOutputFormat {
+    /// Human-readable text.
+    Text,
+    /// Machine-readable JSON.
+    Json,
 }
 
 /// Common CLI arguments shared across all librebar-based applications.
@@ -93,9 +146,13 @@ pub struct CommonArgs {
     #[arg(long, global = true, value_enum, default_value_t)]
     pub color: ColorChoice,
 
-    /// Output as JSON (for scripting).
-    #[arg(long, global = true)]
-    pub json: bool,
+    /// Output format; auto uses text on a terminal and JSON when redirected.
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub format: OutputFormat,
+
+    /// Compatibility spelling for --format json.
+    #[arg(long = "json", global = true, hide = true, conflicts_with = "format")]
+    pub(crate) legacy_json: bool,
 }
 
 /// Whether the process should continue after [`CommonArgs::apply`].
@@ -126,6 +183,23 @@ impl Startup {
 }
 
 impl CommonArgs {
+    /// Resolve the requested output format using stdout's terminal state.
+    pub fn output_format(&self) -> ResolvedOutputFormat {
+        self.output_format_for(std::io::stdout().is_terminal())
+    }
+
+    /// Resolve the requested output format for an explicit terminal state.
+    ///
+    /// This is useful for deterministic rendering tests. Normal applications
+    /// should call [`output_format`](Self::output_format).
+    pub const fn output_format_for(&self, stdout_is_terminal: bool) -> ResolvedOutputFormat {
+        if self.legacy_json {
+            ResolvedOutputFormat::Json
+        } else {
+            self.format.resolve_for(stdout_is_terminal)
+        }
+    }
+
     /// Perform every startup side effect these flags imply.
     ///
     /// This is the one call an application needs after parsing. It applies
