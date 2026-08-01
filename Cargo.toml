@@ -47,7 +47,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 tracing-appender = { version = "0.2.5", optional = true }
 
 # Feature: shutdown
-tokio = { version = "1.52", features = ["rt", "macros", "signal", "sync"], optional = true }
+tokio = { version = "1.52", features = ["rt", "macros", "signal", "sync", "time"], optional = true }
 
 # Feature: otel
 opentelemetry = { version = "0.32", features = ["trace"], optional = true }
@@ -64,6 +64,13 @@ http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1.9", features = ["client", "http1", "http2"], optional = true }
 hyper-rustls = { version = "0.27", features = ["http1", "http2", "ring", "webpki-tokio"], default-features = false, optional = true }
 rustls = { version = "0.23.40", default-features = false, optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+tower-http = { version = "0.7", features = ["decompression-br", "decompression-gzip", "follow-redirect"], optional = true }
+
+# Feature: http-cookies
+cookie_store = { version = "0.22", default-features = false, features = ["public_suffix", "serde_json"], optional = true }
+atomic-write-file = { version = "0.3", optional = true }
+url = { version = "2.5", optional = true }
 
 # Feature: cache
 # default-features = false to opt out of `simd-unsafe`, which base64 0.23
@@ -89,6 +96,8 @@ tempfile = "3.27"
 serde_json = "1.0"
 tokio = { version = "1.52", features = ["rt", "macros", "time"] }
 anyhow = "1.0"
+flate2 = "1.1"
+brotli = "8.0"
 
 [[example]]
 name = "minimal"
@@ -101,6 +110,10 @@ required-features = ["cli", "config", "logging", "shutdown", "crash", "otel"]
 [[example]]
 name = "updater"
 required-features = ["cli", "config", "logging", "http", "cache", "update"]
+
+[[example]]
+name = "http-cookies"
+required-features = ["http-cookies"]
 
 [[example]]
 name = "plugin-cli"
@@ -131,7 +144,8 @@ otel = ["logging", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:openteleme
 otel-grpc = ["otel", "opentelemetry-otlp/grpc-tonic"]
 mcp = ["dep:rmcp", "dep:tokio"]
 lockfile = []
-http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio", "dep:serde_json"]
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio", "dep:serde_json", "dep:tower", "dep:tower-http"]
+http-cookies = ["http", "dep:cookie_store", "dep:atomic-write-file", "dep:url"]
 cache = ["dep:serde_json", "dep:directories", "dep:base64"]
 update = ["http", "cache", "dep:serde_json"]
 dispatch = ["cli", "dep:which"]

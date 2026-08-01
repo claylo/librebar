@@ -24,7 +24,8 @@
 //!
 //! | Feature | Module | Use when your app needs... |
 //! |---------|--------|---------------------------|
-//! | `http` | [`http`] | HTTPS client with tracing, timeouts, user-agent (rustls + Mozilla CA roots) |
+//! | `http` | [`http`] | Hyper client with redirects, decompression, retries, timeouts, and rustls |
+//! | `http-cookies` | [`http`] | Explicit per-client RFC 6265 cookie jars with JSON persistence |
 //! | `cache` | [`cache`] | File-based key-value cache with TTL (XDG cache directory) |
 //! | `update` | [`update`] | "Update available" notifications via GitHub releases API |
 //!
@@ -56,6 +57,7 @@
 //! Some features automatically enable their dependencies:
 //!
 //! - `update` implies `http` + `cache` (needs both for network checks and 24h caching)
+//! - `http-cookies` implies `http`
 //! - `dispatch` implies `cli` (subcommand dispatch extends the CLI)
 //! - `diagnostics` implies `config` + `logging` (bundles need config sources and log paths)
 //! - `otel` implies `logging` (OTEL layer composes with the tracing subscriber)

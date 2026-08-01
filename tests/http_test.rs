@@ -11,17 +11,111 @@
 //
 //     cargo test --all-features -- --ignored
 
-use librebar::http::{HttpClient, HttpClientConfig};
+use librebar::http::{HttpClient, HttpClientConfig, RetryPolicy};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
+
+fn read_request(stream: &mut impl Read) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let count = stream.read(&mut buffer).unwrap();
+        request.extend_from_slice(&buffer[..count]);
+
+        let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .unwrap_or_default();
+        if request.len() >= header_end + 4 + content_length {
+            return String::from_utf8(request).unwrap();
+        }
+    }
+}
+
+fn spawn_server(
+    request_count: usize,
+    responder: impl Fn(usize, &str) -> Vec<u8> + Send + 'static,
+) -> (SocketAddr, mpsc::Receiver<String>, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (request_tx, request_rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        for index in 0..request_count {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let request = read_request(&mut stream);
+            let response = responder(index, &request);
+            request_tx.send(request).unwrap();
+            stream.write_all(&response).unwrap();
+        }
+    });
+    (address, request_rx, server)
+}
+
+fn response(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
+    let mut response = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    )
+    .into_bytes();
+    for (name, value) in headers {
+        response.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+    }
+    response.extend_from_slice(b"\r\n");
+    response.extend_from_slice(body);
+    response
+}
 
 #[test]
 fn client_config_defaults() {
     let cfg = HttpClientConfig::new("test-app", "0.1.0");
     assert_eq!(cfg.user_agent, "test-app/0.1.0");
     assert_eq!(cfg.timeout, Duration::from_secs(30));
+    assert_eq!(cfg.max_redirects, 10);
+    assert!(cfg.decompression);
+    assert_eq!(cfg.retry_policy.retries(), 3);
+    assert!(!cfg.retry_policy.retries_all_methods());
+    assert_eq!(cfg.max_response_size, 16 * 1024 * 1024);
+}
+
+#[test]
+fn client_builder_configures_production_defaults() {
+    let client = HttpClient::builder("test-app", "0.1.0")
+        .max_redirects(5)
+        .no_decompression()
+        .retry_policy(RetryPolicy::none())
+        .max_response_size(1024)
+        .build()
+        .unwrap();
+
+    assert_eq!(client.config().max_redirects, 5);
+    assert!(!client.config().decompression);
+    assert_eq!(client.config().retry_policy.retries(), 0);
+    assert_eq!(client.config().max_response_size, 1024);
+}
+
+#[test]
+fn retry_policy_can_include_non_idempotent_methods() {
+    let policy = RetryPolicy::new().max_retries(5).all_methods();
+
+    assert_eq!(policy.retries(), 5);
+    assert!(policy.retries_all_methods());
 }
 
 #[test]
@@ -117,6 +211,422 @@ async fn post_sends_method_body_and_default_user_agent() {
         "{request}"
     );
     assert!(request.ends_with("\r\n\r\ncreate"), "{request}");
+    server.join().unwrap();
+}
+
+async fn assert_follows_redirect(status: &'static str) {
+    let (address, requests, server) = spawn_server(2, move |index, _| {
+        if index == 0 {
+            response(status, &[("Location", "/final")], b"")
+        } else {
+            response("200 OK", &[], b"arrived")
+        }
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/start"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 200);
+    assert_eq!(result.bytes(), b"arrived");
+    assert!(requests.recv().unwrap().starts_with("GET /start "));
+    assert!(requests.recv().unwrap().starts_with("GET /final "));
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn follows_standard_redirect_statuses() {
+    for status in [
+        "301 Moved Permanently",
+        "302 Found",
+        "307 Temporary Redirect",
+        "308 Permanent Redirect",
+    ] {
+        assert_follows_redirect(status).await;
+    }
+}
+
+async fn assert_post_redirect_semantics(
+    status: &'static str,
+    expected_method: &'static str,
+    expected_body: &'static str,
+) {
+    let (address, requests, server) = spawn_server(2, move |index, _| {
+        if index == 0 {
+            response(status, &[("Location", "/final")], b"")
+        } else {
+            response("200 OK", &[], b"arrived")
+        }
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .post(&format!("http://{address}/start"), b"payload")
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 200);
+    let initial = requests.recv().unwrap();
+    assert!(initial.starts_with("POST /start "), "{initial}");
+    assert!(initial.ends_with("\r\n\r\npayload"), "{initial}");
+    let redirected = requests.recv().unwrap();
+    assert!(
+        redirected.starts_with(&format!("{expected_method} /final ")),
+        "{redirected}"
+    );
+    assert!(
+        redirected.ends_with(&format!("\r\n\r\n{expected_body}")),
+        "{redirected}"
+    );
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn post_301_and_302_redirect_as_bodyless_get() {
+    for status in ["301 Moved Permanently", "302 Found"] {
+        assert_post_redirect_semantics(status, "GET", "").await;
+    }
+}
+
+#[tokio::test]
+async fn post_307_and_308_redirect_replay_method_and_body() {
+    for status in ["307 Temporary Redirect", "308 Permanent Redirect"] {
+        assert_post_redirect_semantics(status, "POST", "payload").await;
+    }
+}
+
+#[tokio::test]
+async fn zero_max_redirects_returns_redirect_response() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        response("302 Found", &[("Location", "/final")], b"redirect")
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .max_redirects(0)
+        .build()
+        .unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/start"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 302);
+    assert_eq!(result.bytes(), b"redirect");
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn redirect_loop_is_an_error() {
+    let (address, requests, server) = spawn_server(2, |index, _| {
+        let location = if index == 0 { "/two" } else { "/one" };
+        response("302 Found", &[("Location", location)], b"")
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let error = client
+        .get(&format!("http://{address}/one"))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("redirect loop"), "{error}");
+    requests.recv().unwrap();
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn exceeding_redirect_limit_is_an_error() {
+    let (address, requests, server) = spawn_server(2, |index, _| {
+        let location = format!("/hop-{}", index + 1);
+        response("302 Found", &[("Location", &location)], b"")
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .max_redirects(1)
+        .build()
+        .unwrap();
+
+    let error = client
+        .get(&format!("http://{address}/start"))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("too many redirects"), "{error}");
+    requests.recv().unwrap();
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn decompresses_gzip_responses_by_default() {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(b"compressed response").unwrap();
+    let compressed = encoder.finish().unwrap();
+    let (address, requests, server) = spawn_server(1, move |_, _| {
+        response("200 OK", &[("Content-Encoding", "gzip")], &compressed)
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client.get(&format!("http://{address}/gzip")).await.unwrap();
+
+    assert_eq!(result.bytes(), b"compressed response");
+    let request = requests.recv().unwrap().to_ascii_lowercase();
+    assert!(request.contains("accept-encoding:"), "{request}");
+    assert!(request.contains("gzip"), "{request}");
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn decompresses_brotli_responses_by_default() {
+    let mut compressed = Vec::new();
+    {
+        let mut encoder = brotli::CompressorWriter::new(&mut compressed, 4096, 5, 22);
+        encoder.write_all(b"compressed response").unwrap();
+    }
+    let (address, requests, server) = spawn_server(1, move |_, _| {
+        response("200 OK", &[("Content-Encoding", "br")], &compressed)
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/brotli"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.bytes(), b"compressed response");
+    let request = requests.recv().unwrap().to_ascii_lowercase();
+    assert!(request.contains("accept-encoding:"), "{request}");
+    assert!(request.contains("br"), "{request}");
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn decompression_can_be_disabled() {
+    let compressed = b"still compressed".to_vec();
+    let expected = compressed.clone();
+    let (address, requests, server) = spawn_server(1, move |_, _| {
+        response("200 OK", &[("Content-Encoding", "gzip")], &compressed)
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .no_decompression()
+        .build()
+        .unwrap();
+
+    let result = client.get(&format!("http://{address}/raw")).await.unwrap();
+
+    assert_eq!(result.bytes(), expected);
+    let request = requests.recv().unwrap().to_ascii_lowercase();
+    assert!(!request.contains("accept-encoding:"), "{request}");
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn retries_server_errors_for_idempotent_methods() {
+    let (address, requests, server) = spawn_server(4, |index, _| {
+        if index < 3 {
+            response("503 Service Unavailable", &[], b"retry")
+        } else {
+            response("200 OK", &[], b"recovered")
+        }
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/retry"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 200);
+    assert_eq!(result.bytes(), b"recovered");
+    for _ in 0..4 {
+        assert!(requests.recv().unwrap().starts_with("GET /retry "));
+    }
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn does_not_retry_client_errors() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        response("429 Too Many Requests", &[], b"slow down")
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/limited"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 429);
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn does_not_retry_non_idempotent_methods_by_default() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        response("503 Service Unavailable", &[], b"do not replay")
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .post(&format!("http://{address}/create"), b"payload")
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 503);
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn all_methods_policy_retries_post() {
+    let (address, requests, server) = spawn_server(2, |index, _| {
+        if index == 0 {
+            response("503 Service Unavailable", &[], b"retry")
+        } else {
+            response("200 OK", &[], b"created")
+        }
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .retry_policy(RetryPolicy::new().max_retries(1).all_methods())
+        .build()
+        .unwrap();
+
+    let result = client
+        .post(&format!("http://{address}/create"), b"payload")
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 200);
+    for _ in 0..2 {
+        let request = requests.recv().unwrap();
+        assert!(request.starts_with("POST /create "), "{request}");
+        assert!(request.ends_with("\r\n\r\npayload"), "{request}");
+    }
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn retry_policy_none_disables_retries() {
+    let (address, requests, server) = spawn_server(1, |_, _| {
+        response("503 Service Unavailable", &[], b"unavailable")
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .retry_policy(RetryPolicy::none())
+        .build()
+        .unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/retry"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 503);
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn retries_transport_errors() {
+    let (address, requests, server) = spawn_server(4, |index, _| {
+        if index < 3 {
+            Vec::new()
+        } else {
+            response("200 OK", &[], b"recovered")
+        }
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/unstable"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 200);
+    for _ in 0..4 {
+        requests.recv().unwrap();
+    }
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn retries_connection_errors_while_reading_the_response_body() {
+    let (address, requests, server) = spawn_server(2, |index, _| {
+        if index == 0 {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial".to_vec()
+        } else {
+            response("200 OK", &[], b"recovered")
+        }
+    });
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+
+    let result = client
+        .get(&format!("http://{address}/unstable-body"))
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, 200);
+    assert_eq!(result.bytes(), b"recovered");
+    for _ in 0..2 {
+        requests.recv().unwrap();
+    }
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn decompressed_responses_are_bounded() {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&vec![b'x'; 1024]).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let (address, requests, server) = spawn_server(1, move |_, _| {
+        response("200 OK", &[("Content-Encoding", "gzip")], &compressed)
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .max_response_size(64)
+        .build()
+        .unwrap();
+
+    let error = client
+        .get(&format!("http://{address}/large"))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("64 bytes"), "{error}");
+    requests.recv().unwrap();
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn retries_use_exponential_backoff() {
+    let (address, requests, server) = spawn_server(3, |index, _| {
+        if index < 2 {
+            response("503 Service Unavailable", &[], b"retry")
+        } else {
+            response("200 OK", &[], b"recovered")
+        }
+    });
+    let client = HttpClient::builder("librebar-test", "0.1.0")
+        .retry_policy(RetryPolicy::new().max_retries(2))
+        .build()
+        .unwrap();
+
+    let started = Instant::now();
+    let result = client
+        .get(&format!("http://{address}/retry"))
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(result.status, 200);
+    assert!(
+        elapsed >= Duration::from_millis(140),
+        "elapsed: {elapsed:?}"
+    );
+    for _ in 0..3 {
+        requests.recv().unwrap();
+    }
     server.join().unwrap();
 }
 

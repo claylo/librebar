@@ -132,12 +132,38 @@ pub enum HttpError {
     /// HTTP header value is invalid.
     #[error("invalid header value: {0}")]
     InvalidHeaderValue(#[from] hyper::header::InvalidHeaderValue),
-    /// Connection or protocol error during request.
+    /// Connection, protocol, or middleware error during request.
     #[error("request: {0}")]
-    Request(#[from] hyper_util::client::legacy::Error),
+    Request(#[source] tower::BoxError),
+    /// A redirect returned to a URI already visited by this request.
+    #[error("redirect loop detected")]
+    RedirectLoop,
+    /// The configured redirect limit was exceeded.
+    #[error("too many redirects (maximum {maximum})")]
+    TooManyRedirects {
+        /// Maximum number of redirects configured for the client.
+        maximum: usize,
+    },
+    /// A cookie jar could not be loaded or saved.
+    #[cfg(feature = "http-cookies")]
+    #[error("cookie jar {operation} failed for {path}: {source}")]
+    CookieJar {
+        /// Operation that failed (`load` or `save`).
+        operation: &'static str,
+        /// Cookie jar path.
+        path: String,
+        /// Underlying filesystem or serialization error.
+        source: tower::BoxError,
+    },
+    /// The decoded response exceeded the configured in-memory limit.
+    #[error("response body exceeds maximum of {maximum} bytes")]
+    ResponseTooLarge {
+        /// Maximum decoded response size configured for the client.
+        maximum: usize,
+    },
     /// Error reading response body.
     #[error("response body: {0}")]
-    Body(#[from] hyper::Error),
+    Body(#[source] tower::BoxError),
     /// I/O or timeout error.
     #[error("{0}")]
     Io(#[from] std::io::Error),

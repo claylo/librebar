@@ -96,7 +96,8 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 
 | Feature | What it does |
 |---------|-------------|
-| `http` | HTTPS client with GET/POST/PUT/PATCH/DELETE, tracing, timeouts, user-agent (rustls + Mozilla CA roots) |
+| `http` | Hyper client with redirects, gzip/Brotli decompression, idempotent retries, timeouts, and rustls |
+| `http-cookies` | Explicit per-client RFC 6265 cookie jars with JSON persistence |
 | `update` | "Update available" notifications via the GitHub releases API (24-hour cache) |
 | `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
 | `otel` | OpenTelemetry tracing export via OTLP/HTTP |
@@ -112,7 +113,7 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 | `bench` | Wall-clock benchmarks via [divan](https://crates.io/crates/divan) (any platform) |
 | `bench-gungraun` | Instruction-count benchmarks via [gungraun](https://crates.io/crates/gungraun) / Valgrind (Linux/Intel) |
 
-Feature implications: `update` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
+Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
 
 ## Typical feature sets
 
@@ -126,12 +127,22 @@ librebar = { version = "0.3", features = ["shutdown", "otel"] }
 # CLI tool with update checks
 librebar = { version = "0.3", features = ["update"] }
 
+# Stateful HTTP client with an explicitly enabled cookie jar
+librebar = { version = "0.3", features = ["http-cookies"] }
+
 # Plugin-extensible CLI (git-style subcommands)
 librebar = { version = "0.3", features = ["dispatch"] }
 
 # Minimal — just CLI and config, no logging or crash dumps
 librebar = { version = "0.3", default-features = false, features = ["cli", "config"] }
 ```
+
+The `http` client follows up to 10 redirects, transparently decodes gzip and
+Brotli responses, and retries idempotent methods up to three times on 5xx or
+transport failures with exponential backoff. Decoded response bodies are
+limited to 16 MiB by default. `HttpClient::builder` can tune or disable each
+behavior. Cookie handling remains stateless unless an individual client calls
+`with_cookie_jar()` or `with_cookie_jar_from()`.
 
 ## CLI
 
