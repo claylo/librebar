@@ -26,6 +26,8 @@
 
 use crate::error::Result;
 
+mod blocking_hyper;
+
 /// A boxed tracing layer that can be composed on a `Registry`.
 pub type BoxedLayer =
     Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>;
@@ -121,7 +123,8 @@ fn write_shutdown_error(mut writer: impl std::io::Write, error: impl std::fmt::D
 /// # Errors
 ///
 /// Returns [`Error::OtelInit`](crate::Error::OtelInit) if the exporter
-/// or tracer provider fails to build.
+/// or tracer provider fails to build, or [`Error::Io`](crate::Error::Io) if
+/// the HTTP exporter's private runtime thread cannot be created.
 pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<OtelGuard>)> {
     let endpoint = match cfg.endpoint.as_deref() {
         Some(ep) if !ep.is_empty() => ep,
@@ -159,7 +162,7 @@ pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<
 
 /// Build the span exporter based on the protocol string.
 fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::SpanExporter> {
-    use opentelemetry_otlp::WithExportConfig as _;
+    use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
 
     match protocol {
         #[cfg(feature = "otel-grpc")]
@@ -170,12 +173,29 @@ fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::
             .map_err(crate::Error::OtelInit),
 
         // http/protobuf, http/json, or anything else — use HTTP transport
-        _ => opentelemetry_otlp::SpanExporter::builder()
-            .with_http()
-            .with_endpoint(endpoint)
-            .build()
-            .map_err(crate::Error::OtelInit),
+        _ => {
+            let timeout = otlp_trace_timeout();
+            let client = blocking_hyper::BlockingHyperClient::new(timeout)?;
+            opentelemetry_otlp::SpanExporter::builder()
+                .with_http()
+                .with_http_client(client)
+                .with_endpoint(endpoint)
+                .with_timeout(timeout)
+                .build()
+                .map_err(crate::Error::OtelInit)
+        }
     }
+}
+
+fn otlp_trace_timeout() -> std::time::Duration {
+    [
+        opentelemetry_otlp::OTEL_EXPORTER_OTLP_TRACES_TIMEOUT,
+        "OTEL_EXPORTER_OTLP_TIMEOUT",
+    ]
+    .into_iter()
+    .find_map(|name| std::env::var(name).ok()?.parse::<u64>().ok())
+    .map(std::time::Duration::from_millis)
+    .unwrap_or_else(|| std::time::Duration::from_secs(10))
 }
 
 #[cfg(test)]
