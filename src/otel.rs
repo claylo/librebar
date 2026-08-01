@@ -28,6 +28,8 @@
 use crate::error::Result;
 
 mod blocking_hyper;
+#[cfg(feature = "otel-grpc")]
+mod blocking_tonic;
 
 /// A boxed tracing layer that can be composed on a `Registry`.
 pub type BoxedLayer =
@@ -95,6 +97,8 @@ impl OtelConfig {
 /// `provider.shutdown()` which flushes any pending span batches.
 pub struct OtelGuard {
     provider: opentelemetry_sdk::trace::SdkTracerProvider,
+    #[cfg(feature = "otel-grpc")]
+    tonic_runtime: Option<blocking_tonic::BlockingTonicRuntime>,
 }
 
 impl Drop for OtelGuard {
@@ -102,6 +106,8 @@ impl Drop for OtelGuard {
         if let Err(e) = self.provider.shutdown() {
             write_shutdown_error(std::io::stderr().lock(), e);
         }
+        #[cfg(feature = "otel-grpc")]
+        drop(self.tonic_runtime.take());
     }
 }
 
@@ -122,7 +128,7 @@ fn write_shutdown_error(mut writer: impl std::io::Write, error: impl std::fmt::D
 ///
 /// Returns [`Error::OtelInit`](crate::Error::OtelInit) if the exporter
 /// or tracer provider fails to build, or [`Error::Io`](crate::Error::Io) if
-/// the HTTP exporter's private runtime thread cannot be created.
+/// a private exporter runtime thread cannot be created.
 pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<OtelGuard>)> {
     let endpoint = match cfg.endpoint.as_deref() {
         Some(ep) if !ep.is_empty() => ep,
@@ -141,7 +147,11 @@ pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<
         .ok()
         .unwrap_or_default();
 
-    let exporter = build_exporter(endpoint, &protocol)?;
+    let BuiltExporter {
+        exporter,
+        #[cfg(feature = "otel-grpc")]
+        tonic_runtime,
+    } = build_exporter(endpoint, &protocol)?;
 
     let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
@@ -155,25 +165,45 @@ pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<
     let layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     let boxed: BoxedLayer = Box::new(layer);
-    Ok((Some(boxed), Some(OtelGuard { provider })))
+    Ok((
+        Some(boxed),
+        Some(OtelGuard {
+            provider,
+            #[cfg(feature = "otel-grpc")]
+            tonic_runtime,
+        }),
+    ))
+}
+
+struct BuiltExporter {
+    exporter: opentelemetry_otlp::SpanExporter,
+    #[cfg(feature = "otel-grpc")]
+    tonic_runtime: Option<blocking_tonic::BlockingTonicRuntime>,
 }
 
 /// Build the span exporter based on the protocol string.
-fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::SpanExporter> {
+fn build_exporter(endpoint: &str, protocol: &str) -> Result<BuiltExporter> {
     match protocol {
         #[cfg(feature = "otel-grpc")]
         "grpc" => {
-            use opentelemetry_otlp::WithExportConfig as _;
-
-            opentelemetry_otlp::SpanExporter::builder()
-                .with_tonic()
-                .with_endpoint(endpoint)
-                .build()
-                .map_err(crate::Error::OtelInit)
+            let (exporter, tonic_runtime) =
+                blocking_tonic::BlockingTonicRuntime::build_exporter(endpoint)?;
+            Ok(BuiltExporter {
+                exporter,
+                tonic_runtime: Some(tonic_runtime),
+            })
         }
 
         #[cfg(feature = "otel-http-json")]
-        "http/json" => build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpJson),
+        "http/json" => {
+            build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpJson).map(|exporter| {
+                BuiltExporter {
+                    exporter,
+                    #[cfg(feature = "otel-grpc")]
+                    tonic_runtime: None,
+                }
+            })
+        }
 
         #[cfg(not(feature = "otel-http-json"))]
         "http/json" => Err(crate::Error::OtelInit(
@@ -184,7 +214,13 @@ fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::
         )),
 
         // http/protobuf or anything else — preserve the protobuf default.
-        _ => build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpBinary),
+        _ => build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpBinary).map(
+            |exporter| BuiltExporter {
+                exporter,
+                #[cfg(feature = "otel-grpc")]
+                tonic_runtime: None,
+            },
+        ),
     }
 }
 

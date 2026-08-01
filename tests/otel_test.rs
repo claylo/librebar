@@ -199,6 +199,21 @@ fn http_export_reaches_collector_without_async_runtime() {
     assert!(!body.is_empty(), "OTLP request has a body");
 }
 
+#[cfg(feature = "otel-grpc")]
+#[test]
+fn grpc_protocol_builds_without_async_runtime() {
+    let _guard = clear_otel_env();
+    // SAFETY: ENV_LOCK serializes env-touching tests in this file.
+    unsafe { std::env::set_var(OtelConfig::ENV_VAR_PROTOCOL, "grpc") };
+    let cfg = OtelConfig::from_app_name("test-app", "0.1.0")
+        .with_endpoint(Some("http://127.0.0.1:4317".to_string()));
+
+    let (layer, guard) = librebar::otel::build_otel_layer(&cfg).expect("build gRPC OTLP layer");
+
+    assert!(layer.is_some(), "gRPC endpoint enables the OTEL layer");
+    assert!(guard.is_some(), "gRPC exporter retains its provider");
+}
+
 #[cfg(feature = "otel-http-json")]
 #[test]
 fn http_json_protocol_sends_json() {
