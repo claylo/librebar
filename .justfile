@@ -1,7 +1,5 @@
 set shell := ["bash", "-c"]
 set dotenv-load := true
-toolchain := `taplo get -f rust-toolchain.toml toolchain.channel | tr -d '"'`
-msrv := "1.89.0"
 
 default:
   @just --list
@@ -9,12 +7,14 @@ default:
 fmt:
   cargo fmt --all -- --config-path .config/rustfmt.toml
 
+fmt-check:
+  cargo fmt --all --check -- --config-path .config/rustfmt.toml
+
 clippy:
-  cargo +{{toolchain}} clippy --all-targets --all-features --message-format=short -- -D warnings
+  cargo clippy --all-targets --all-features --message-format=short -- -D warnings
 
 fix:
-  echo "Using toolchain {{toolchain}}"
-  cargo +{{toolchain}} clippy --fix --allow-dirty --allow-staged -- -W clippy::all
+  cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all
 
 # Check dependencies for security advisories and license compliance.
 # `--all-features` walks the full dep tree so optional features (hyper-rustls,
@@ -45,13 +45,16 @@ doc-test:
 feature-matrix:
   cargo hack check --each-feature --no-dev-deps
 
+msrv-check:
+  cargo check --all-targets --all-features
+
 cov:
   @cargo llvm-cov clean --workspace
   cargo llvm-cov nextest --no-report
   @cargo llvm-cov report --html
   @cargo llvm-cov report --summary-only --json --output-path target/llvm-cov/summary.json
 
-check: fmt clippy deny test doc-test
+check: fmt-check clippy deny test doc-test
 
 # Check for outdated dependencies (root only, no transitive noise)
 outdated:

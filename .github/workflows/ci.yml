@@ -36,11 +36,16 @@ jobs:
           cache-key-suffix: lint
           toolchain: stable
 
+      - name: Install just
+        uses: ./.github/actions/setup-cargo-tools
+        with:
+          binstall-tools: just
+
       - name: rustfmt
-        run: cargo fmt --check -- --config-path .config/rustfmt.toml
+        run: just fmt-check
 
       - name: clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: just clippy
 
   test:
     name: test
@@ -61,16 +66,16 @@ jobs:
           cache-key-suffix: test
           toolchain: stable
 
-      - name: Install nextest
+      - name: Install test tools
         uses: ./.github/actions/setup-cargo-tools
         with:
-          binstall-tools: cargo-nextest
+          binstall-tools: just cargo-nextest
 
       - name: nextest
-        run: cargo nextest run --workspace --all-features --profile ci
+        run: just test-ci
 
       - name: doctests
-        run: cargo test --doc --all-features
+        run: just doc-test
 
   feature-matrix:
     name: feature matrix
@@ -91,13 +96,13 @@ jobs:
           cache-key-suffix: feature-matrix
           toolchain: stable
 
-      - name: Install cargo-hack
+      - name: Install feature tools
         uses: ./.github/actions/setup-cargo-tools
         with:
-          binstall-tools: cargo-hack
+          binstall-tools: just cargo-hack
 
       - name: Check feature matrix
-        run: cargo hack check --each-feature --no-dev-deps
+        run: just feature-matrix
 
   deny:
     name: cargo-deny
@@ -107,22 +112,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The action composes `cargo-deny <arguments> <command> <command-arguments>`.
-      #
-      # `--config` position is cargo-deny-version-specific and the two forms are
-      # mutually exclusive: <=0.19.x accepts it ONLY after the subcommand, 0.20+
-      # ONLY before it. So the action release matters — v2.1.1 is the first that
-      # bundles cargo-deny 0.20.2, matching the version `just deny` runs locally.
-      # Keep this pin and .justfile's `deny` recipe in step; if they drift apart,
-      # one of the two starts failing on the `--config` placement.
-      #
-      # `arguments` defaults to `--all-features`, restated here because setting
-      # it overrides the default.
-      - name: Check dependencies
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - name: Install dependency tools
+        uses: ./.github/actions/setup-cargo-tools
         with:
-          command: check
-          arguments: --all-features --config .config/deny.toml
+          binstall-tools: just cargo-deny@0.20.2
+
+      - name: Check dependencies
+        run: just deny
 
   msrv:
     name: msrv
@@ -173,6 +169,12 @@ jobs:
           cache-key-suffix: msrv
           toolchain: ${{ steps.msrv.outputs.msrv }}
 
+      - name: Install just
+        if: steps.msrv.outputs.found == 'true'
+        uses: ./.github/actions/setup-cargo-tools
+        with:
+          binstall-tools: just
+
       # RUSTUP_TOOLCHAIN is required, not belt-and-braces. rustup's override
       # order is: `+toolchain` arg > RUSTUP_TOOLCHAIN > directory override >
       # rust-toolchain.toml > default toolchain. dtolnay/rust-toolchain sets the
@@ -183,4 +185,4 @@ jobs:
         if: steps.msrv.outputs.found == 'true'
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.msrv }}
-        run: cargo check --all-targets --all-features
+        run: just msrv-check
