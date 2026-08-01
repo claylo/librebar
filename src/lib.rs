@@ -6,8 +6,9 @@
 //!
 //! # Features
 //!
-//! Every module is behind a Cargo feature flag. No features are enabled
-//! by default — you opt in to exactly what your application needs.
+//! Every module is behind a Cargo feature flag. The default application
+//! foundation enables `cli`, `config`, `logging`, `crash`, `cache`, and
+//! `diagnostics`; use `default-features = false` for a narrower build.
 //!
 //! ## Core application features
 //!
@@ -64,16 +65,16 @@
 //!
 //! ```toml
 //! # Minimal CLI tool
-//! librebar = { version = "0.3", features = ["cli", "config", "logging"] }
+//! librebar = "0.3"
 //!
 //! # CLI tool with update checks
-//! librebar = { version = "0.3", features = ["cli", "config", "logging", "shutdown", "update"] }
+//! librebar = { version = "0.3", features = ["shutdown", "update"] }
 //!
 //! # Long-running service with observability
-//! librebar = { version = "0.3", features = ["cli", "config", "logging", "shutdown", "otel", "crash"] }
+//! librebar = { version = "0.3", features = ["shutdown", "otel"] }
 //!
 //! # Plugin-extensible CLI (git-style subcommands)
-//! librebar = { version = "0.3", features = ["cli", "config", "logging", "dispatch"] }
+//! librebar = { version = "0.3", features = ["dispatch"] }
 //! ```
 //!
 //! # Builder usage

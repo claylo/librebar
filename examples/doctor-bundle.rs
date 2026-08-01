@@ -9,19 +9,13 @@
 //!
 //! ```sh
 //! # Run the health checks and print a report:
-//! cargo run --example doctor-bundle \
-//!     --features "cli,config,logging,diagnostics" \
-//!     -- -C examples doctor
+//! cargo run --example doctor-bundle -- -C examples doctor
 //!
 //! # Build a debug bundle (tar.gz) in the configured bundle directory:
-//! cargo run --example doctor-bundle \
-//!     --features "cli,config,logging,diagnostics" \
-//!     -- -C examples bundle
+//! cargo run --example doctor-bundle -- -C examples bundle
 //!
 //! # Show configured paths and what would go where:
-//! cargo run --example doctor-bundle \
-//!     --features "cli,config,logging,diagnostics" \
-//!     -- -C examples info
+//! cargo run --example doctor-bundle -- -C examples info
 //! ```
 //!
 //! # What it demonstrates

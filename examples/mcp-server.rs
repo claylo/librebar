@@ -10,7 +10,7 @@
 //!
 //! ```sh
 //! cargo run --example mcp-server \
-//!     --features "cli,config,logging,mcp" \
+//!     --features "mcp" \
 //!     -- -C examples run
 //! ```
 //!
@@ -26,7 +26,7 @@
 //!
 //! ```sh
 //! cargo run --example mcp-server \
-//!     --features "cli,config,logging,mcp" \
+//!     --features "mcp" \
 //!     -- -C examples call --name Clay
 //! # → bonjour, Clay!     (using greeting from examples/mcp-server.toml)
 //! ```
@@ -40,7 +40,7 @@
 //! ```sh
 //! npx @modelcontextprotocol/inspector \
 //!     cargo run --example mcp-server \
-//!     --features "cli,config,logging,mcp" \
+//!     --features "mcp" \
 //!     -- run
 //! ```
 //!

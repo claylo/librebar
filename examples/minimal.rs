@@ -8,11 +8,11 @@
 //!
 //! ```sh
 //! # From the project root — config is discovered from the current directory:
-//! cargo run --example minimal --features "cli,config,logging" -- hello
-//! cargo run --example minimal --features "cli,config,logging" -- -v info
+//! cargo run --example minimal -- hello
+//! cargo run --example minimal -- -v info
 //!
 //! # Point at the sample config explicitly:
-//! cargo run --example minimal --features "cli,config,logging" -- -C examples info
+//! cargo run --example minimal -- -C examples info
 //! ```
 //!
 //! # What it demonstrates

@@ -11,7 +11,7 @@
 //! Build both binaries in one pass:
 //!
 //! ```sh
-//! cargo build --examples --features "cli,config,logging,dispatch"
+//! cargo build --examples --features "dispatch"
 //! ```
 //!
 //! Then run the main binary with the target/debug/examples directory

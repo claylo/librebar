@@ -1,6 +1,6 @@
 # Librebar
 
-Opinionated application foundation for Rust CLIs and services. Wire up CLI flags, layered config, and structured logging in about 30 lines.
+Opinionated application foundation for Rust CLIs and services. Add one dependency and get an agent-ready CLI, layered config with environment overrides, structured logging, crash dumps, file caching, and a diagnostics bundle — out of the box.
 
 ```rust
 use anyhow::Result;
@@ -32,8 +32,6 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = librebar::cli::parse::<Cli>();
 
-    // Applies color, answers --version-only, honors -C. Returns Exit when a
-    // flag was a complete request in itself.
     if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
         return Ok(());
     }
@@ -43,6 +41,7 @@ fn main() -> Result<()> {
         .with_cli(cli.common)
         .config::<Config>()
         .logging()
+        .crash_handler()
         .start()?;
 
     match cli.command {
@@ -53,54 +52,58 @@ fn main() -> Result<()> {
 }
 ```
 
-Librebar is a library, not a framework. You own `main()`. You own your CLI struct. You own your config struct. Librebar handles the wiring that is identical across every project.
+Librebar is a library, not a framework. You own `main()`. You own your CLI struct. You own your config struct. Librebar handles the wiring that is identical across every project — and gets it right so you don't have to think about it.
+
+## What you get
+
+Out of the box, with no feature flags:
+
+- **CLI** — typed `--format auto|text|json` output selection, `--quiet`/`--verbose`/`--color`/`--chdir`, machine-readable `schema` subcommand for agent discovery, shell completions, manpage generation
+- **Config** — TOML/YAML/JSON file discovery with walk-up search, layered deep merge, typed environment variable overrides with `__` nesting, explicit file and programmatic CLI override layers
+- **Logging** — JSONL structured logging to file with daily rotation, platform-aware log directories, never touches stdout
+- **Crash handling** — structured JSON crash dumps on panic, written to XDG cache, chained with the default hook
+- **Caching** — file-based key-value cache with TTL, collision-safe keys, XDG cache directory
+- **Diagnostics** — `doctor` command framework and `.tar.gz` debug bundle builder
 
 ## Installation
 
-Add librebar to your `Cargo.toml` with the features you need:
+```toml
+[dependencies]
+librebar = "0.3"
+```
+
+Default features give you the full foundation. To trim for a minimal binary, disable defaults and opt in:
 
 ```toml
 [dependencies]
-librebar = { version = "0.3", features = ["cli", "config", "logging"] }
+librebar = { version = "0.3", default-features = false, features = ["cli", "config", "logging"] }
 ```
-
-No default features. You opt into exactly what you need.
 
 ## Features
 
-### Core application
+### Default (the foundation)
 
 | Feature | What it does |
 |---------|-------------|
-| `cli` | Typed output selection, CLI Spec schema, and shared Clap arguments |
-| `config` | Layered config discovery, deep merge, TOML/YAML/JSON parsing |
+| `cli` | Typed output selection, CLI Spec schema, shared Clap arguments, completions, manpages |
+| `config` | Layered config discovery, deep merge, environment overlays, TOML/YAML/JSON |
 | `logging` | JSONL structured logging with daily rotation and platform-aware log directories |
-| `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
 | `crash` | Panic hook with structured JSON crash dumps written to the XDG cache directory |
-
-### Networking and data
-
-| Feature | What it does |
-|---------|-------------|
-| `http` | HTTPS client with tracing, timeouts, user-agent (rustls + Mozilla CA roots) |
 | `cache` | File-based key-value cache with TTL (XDG cache directory) |
-| `update` | "Update available" notifications via the GitHub releases API (24-hour cache) |
+| `diagnostics` | `doctor` command framework + `.tar.gz` debug bundle builder |
 
-### Integration
+### Opt-in (add what your project needs)
 
 | Feature | What it does |
 |---------|-------------|
+| `http` | HTTPS client with GET/POST/PUT/PATCH/DELETE, tracing, timeouts, user-agent (rustls + Mozilla CA roots) |
+| `update` | "Update available" notifications via the GitHub releases API (24-hour cache) |
+| `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
 | `otel` | OpenTelemetry tracing export via OTLP/HTTP |
 | `otel-grpc` | OpenTelemetry via gRPC (adds Tonic transport) |
 | `mcp` | Model Context Protocol server support (rmcp wrapper) |
-
-### Operational
-
-| Feature | What it does |
-|---------|-------------|
 | `lockfile` | Exclusive file locks to prevent concurrent instances |
 | `dispatch` | Git-style `{app}-{subcommand}` plugin lookup on PATH |
-| `diagnostics` | `doctor` command framework + `.tar.gz` debug bundle builder |
 
 ### Benchmarking (dev-only)
 
@@ -109,7 +112,26 @@ No default features. You opt into exactly what you need.
 | `bench` | Wall-clock benchmarks via [divan](https://crates.io/crates/divan) (any platform) |
 | `bench-gungraun` | Instruction-count benchmarks via [gungraun](https://crates.io/crates/gungraun) / Valgrind (Linux/Intel) |
 
-Some features automatically enable their dependencies: `update` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
+Feature implications: `update` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
+
+## Typical feature sets
+
+```toml
+# Full foundation (default features, nothing extra needed)
+librebar = "0.3"
+
+# Long-running service with graceful shutdown and observability
+librebar = { version = "0.3", features = ["shutdown", "otel"] }
+
+# CLI tool with update checks
+librebar = { version = "0.3", features = ["update"] }
+
+# Plugin-extensible CLI (git-style subcommands)
+librebar = { version = "0.3", features = ["dispatch"] }
+
+# Minimal — just CLI and config, no logging or crash dumps
+librebar = { version = "0.3", default-features = false, features = ["cli", "config"] }
+```
 
 ## CLI
 
@@ -435,11 +457,12 @@ The builder wires everything in the correct initialization order:
 3. Return `App<C>` with everything wired up
 
 ```rust
-// Full setup — CLI, config, and logging
+// Full setup — CLI, config, logging, crash handler
 let app = librebar::init(env!("CARGO_PKG_NAME"))
     .with_cli(cli.common)
     .config::<Config>()
     .logging()
+    .crash_handler()
     .start()?;
 
 // Access initialized state
@@ -498,7 +521,7 @@ docker run --rm -d -p 18888:18888 \
 # Run the service with export enabled:
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:18890 \
     cargo run --example service \
-    --features "cli,config,logging,shutdown,crash,otel" \
+    --features "shutdown,otel" \
     -- -C examples run
 
 # Open the UI; spans from the `service` service show up under that name:

@@ -9,22 +9,22 @@
 //! ```sh
 //! # Check for updates (first call hits network, subsequent calls hit cache):
 //! cargo run --example updater \
-//!     --features "cli,config,logging,http,cache,update" \
+//!     --features "update" \
 //!     -- -C examples check
 //!
 //! # Report what the checker is configured to do without running it:
 //! cargo run --example updater \
-//!     --features "cli,config,logging,http,cache,update" \
+//!     --features "update" \
 //!     -- -C examples info
 //!
 //! # Drop the cache so the next `check` hits the network again:
 //! cargo run --example updater \
-//!     --features "cli,config,logging,http,cache,update" \
+//!     --features "update" \
 //!     -- -C examples clear-cache
 //!
 //! # Suppress the check entirely — useful in CI or offline:
 //! UPDATER_NO_UPDATE_CHECK=1 cargo run --example updater \
-//!     --features "cli,config,logging,http,cache,update" \
+//!     --features "update" \
 //!     -- -C examples check
 //! ```
 //!

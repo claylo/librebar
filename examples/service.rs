@@ -10,18 +10,18 @@
 //! ```sh
 //! # Run from repo root (discovers examples/service.toml via -C):
 //! cargo run --example service \
-//!     --features "cli,config,logging,shutdown,crash,otel" \
+//!     --features "shutdown,otel" \
 //!     -- -C examples run
 //!
 //! # Report what was loaded and how observability is wired:
 //! cargo run --example service \
-//!     --features "cli,config,logging,shutdown,crash,otel" \
+//!     --features "shutdown,otel" \
 //!     -- -C examples info
 //!
 //! # Fire a panic to exercise the crash handler. Look for the crash report
 //! # path printed on stderr after the panic.
 //! cargo run --example service \
-//!     --features "cli,config,logging,shutdown,crash,otel" \
+//!     --features "shutdown,otel" \
 //!     -- -C examples crash
 //! ```
 //!
@@ -36,7 +36,7 @@
 //! ```sh
 //! OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 //!     cargo run --example service \
-//!     --features "cli,config,logging,shutdown,crash,otel" \
+//!     --features "shutdown,otel" \
 //!     -- -C examples run
 //! ```
 //!
