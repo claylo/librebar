@@ -90,13 +90,18 @@ fn missing_key_returns_none() {
 }
 
 #[test]
-fn expired_entry_returns_none() {
+fn expired_entry_returns_none_without_unlinking() {
     let tmp = TempDir::new().unwrap();
     let cache = Cache::new(tmp.path());
     // TTL of 0 means already expired
     cache.set("key1", b"value1", Duration::ZERO).unwrap();
+    let path = cache_entry_path(tmp.path(), "key1");
+    assert!(path.exists());
+
     let result = cache.get("key1").unwrap();
+
     assert!(result.is_none());
+    assert!(path.exists());
 }
 
 #[test]

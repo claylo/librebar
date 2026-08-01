@@ -2,8 +2,8 @@
 //!
 //! Provides a simple key-value cache backed by owner-only, atomically replaced
 //! files. Each v2 entry stores a fixed expiry header followed by the raw value.
-//! Expired entries are treated as missing and cleaned up on access, explicit
-//! pruning, and periodic write-path maintenance.
+//! Expired entries are treated as missing and cleaned up by explicit pruning
+//! and periodic write-path maintenance.
 //!
 //! # Example
 //!
@@ -41,7 +41,7 @@ const AUTOMATIC_PRUNE_INTERVAL_SECS: u64 = 60 * 60;
 
 /// File-based cache with TTL support.
 ///
-/// Expired entries are removed when read, when [`Cache::prune`] is called, and
+/// Expired entries are removed when [`Cache::prune`] is called and
 /// opportunistically before the first write and at most hourly afterward.
 /// The cache does not impose an entry-count or byte-size ceiling.
 #[derive(Clone, Debug)]
@@ -120,7 +120,6 @@ impl Cache {
 
         if now >= expires_at {
             tracing::debug!(key, "cache entry expired");
-            let _ = std::fs::remove_file(&path);
             return Ok(None);
         }
 
