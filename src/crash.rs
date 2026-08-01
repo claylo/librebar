@@ -3,6 +3,8 @@
 //! Installs a custom panic hook that captures the panic message, backtrace,
 //! location, and OS info, writes a structured crash dump to the XDG cache
 //! directory, and chains to the previous hook to preserve default behavior.
+//! Dumps may contain sensitive panic payloads, backtraces, and source paths;
+//! files are owner-only on Unix and only the ten newest dumps are retained.
 //!
 //! # Usage
 //!
@@ -23,6 +25,9 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::{fs::OpenOptions, io::Write as _};
+
+const MAX_CRASH_DUMPS: usize = 10;
 
 // ─── Public API ─────────────────────────────────────────────────────
 
@@ -115,7 +120,9 @@ pub fn install(app_name: &str, version: &str) {
 
 /// Write a crash dump to a file in `dir`.
 ///
-/// The file is named with a timestamp and `.crash` extension.
+/// The file is named with a timestamp and `.crash` extension. Files are
+/// owner-only on Unix, existing same-timestamp files are not replaced, and
+/// only the ten newest crash dumps in `dir` are retained.
 /// Returns the path to the written file, or `None` if writing failed.
 pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
     if std::fs::create_dir_all(dir).is_err() {
@@ -128,7 +135,27 @@ pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
     let path = dir.join(&filename);
 
     let content = info.format();
-    std::fs::write(&path, content).ok()?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(&path).ok()?;
+    if file.write_all(content.as_bytes()).is_err() {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
+    drop(file);
+
+    if prune_crash_dumps(dir).is_err() {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
     Some(path)
 }
 
@@ -167,6 +194,31 @@ fn platform_cache_dir(app_name: &str) -> Option<PathBuf> {
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
         Some(cache_base.join(app_name).join("crashes"))
     }
+}
+
+fn prune_crash_dumps(dir: &Path) -> std::io::Result<()> {
+    let mut dumps = Vec::new();
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file()
+            && entry.path().extension() == Some(std::ffi::OsStr::new("crash"))
+        {
+            dumps.push(entry.path());
+        }
+    }
+
+    dumps.sort();
+    let remove_count = dumps.len().saturating_sub(MAX_CRASH_DUMPS);
+    for path in dumps.into_iter().take(remove_count) {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(())
 }
 
 fn extract_panic_message(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
