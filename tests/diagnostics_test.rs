@@ -103,12 +103,13 @@ fn runner_reports_pass_and_fail() {
 }
 
 #[test]
-fn debug_bundle_creates_archive() {
+fn debug_bundle_can_be_finished_from_a_chain() {
     let tmp = TempDir::new().unwrap();
-    let mut bundle = DebugBundle::new("test-app", tmp.path());
+    let archive_path = DebugBundle::new("test-app", tmp.path())
+        .add_text("info.txt", "test content")
+        .finish()
+        .unwrap();
 
-    bundle.add_text("info.txt", "test content");
-    let archive_path = bundle.finish().unwrap();
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".tar.gz"));
 }
@@ -119,8 +120,8 @@ fn debug_bundle_streams_a_pre_sanitized_file_at_finish() {
     let source = tmp.path().join("application.log");
     std::fs::write(&source, "before finish").unwrap();
 
-    let mut bundle = DebugBundle::new("test-app", tmp.path());
-    bundle.add_sanitized_file("logs/application.log", &source);
+    let bundle = DebugBundle::new("test-app", tmp.path())
+        .add_sanitized_file("logs/application.log", &source);
 
     std::fs::write(&source, "content read at finish").unwrap();
     let archive_path = bundle.finish().unwrap();
@@ -174,7 +175,7 @@ fn debug_bundle_redacts_sensitive_values_from_text_formats() {
     ];
 
     for (name, content, _, _) in cases {
-        bundle.add_text(name, content);
+        bundle = bundle.add_text(name, content);
     }
 
     let archive_path = bundle.finish().unwrap();
@@ -193,8 +194,9 @@ fn debug_bundle_redacts_sensitive_values_from_text_formats() {
 #[test]
 fn debug_bundle_accepts_a_custom_redactor() {
     let tmp = TempDir::new().unwrap();
-    let mut bundle = DebugBundle::new("test-app", tmp.path()).with_redactor(FixedRedactor);
-    bundle.add_bytes("opaque.bin", b"private bytes".to_vec());
+    let bundle = DebugBundle::new("test-app", tmp.path())
+        .with_redactor(FixedRedactor)
+        .add_bytes("opaque.bin", b"private bytes".to_vec());
 
     let archive_path = bundle.finish().unwrap();
     let (content, _) = read_archive_entry(&archive_path, "opaque.bin");
@@ -207,8 +209,7 @@ fn debug_bundle_archive_is_owner_only() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let tmp = TempDir::new().unwrap();
-    let mut bundle = DebugBundle::new("test-app", tmp.path());
-    bundle.add_text("info.txt", "safe content");
+    let bundle = DebugBundle::new("test-app", tmp.path()).add_text("info.txt", "safe content");
 
     let archive_path = bundle.finish().unwrap();
     let mode = std::fs::metadata(archive_path)
@@ -221,8 +222,7 @@ fn debug_bundle_archive_is_owner_only() {
 #[test]
 fn debug_bundle_entries_are_owner_only() {
     let tmp = TempDir::new().unwrap();
-    let mut bundle = DebugBundle::new("test-app", tmp.path());
-    bundle.add_text("info.txt", "safe content");
+    let bundle = DebugBundle::new("test-app", tmp.path()).add_text("info.txt", "safe content");
 
     let archive_path = bundle.finish().unwrap();
     let (_, mode) = read_archive_entry(&archive_path, "info.txt");

@@ -140,11 +140,10 @@ fn run_bundle(app: &librebar::App<Config>) -> Result<()> {
     let sources_json =
         serde_json::to_string_pretty(app.config_sources()).context("serializing config sources")?;
 
-    let mut bundle = DebugBundle::new(app.app_name(), &dir);
-    bundle
+    let path = DebugBundle::new(app.app_name(), &dir)
         .add_doctor_results(&results)
-        .add_text("config-sources.json", &sources_json);
-    let path = bundle.finish()?;
+        .add_text("config-sources.json", &sources_json)
+        .finish()?;
 
     tracing::info!(path = %path.display(), "bundle written");
     println!("bundle written: {}", path.display());

@@ -497,7 +497,8 @@ impl DebugBundle {
     }
 
     /// Add a text file to the bundle after redaction.
-    pub fn add_text(&mut self, name: &str, content: &str) -> &mut Self {
+    #[must_use]
+    pub fn add_text(self, name: &str, content: &str) -> Self {
         self.add_bytes(name, content.as_bytes())
     }
 
@@ -505,7 +506,8 @@ impl DebugBundle {
     ///
     /// Passing an owned [`Vec<u8>`] moves the caller's buffer into this method
     /// instead of cloning it at the API boundary.
-    pub fn add_bytes(&mut self, name: &str, data: impl Into<Vec<u8>>) -> &mut Self {
+    #[must_use]
+    pub fn add_bytes(mut self, name: &str, data: impl Into<Vec<u8>>) -> Self {
         let data = data.into();
         let data = self.redactor.redact(name, &data);
         self.entries.push(DebugBundleEntry::Buffered {
@@ -522,7 +524,8 @@ impl DebugBundle {
     /// until then. This method deliberately does not run the configured
     /// [`Redactor`]; use [`Self::add_text`] or [`Self::add_bytes`] for content
     /// that has not already crossed a trusted redaction boundary.
-    pub fn add_sanitized_file(&mut self, name: &str, path: &Path) -> &mut Self {
+    #[must_use]
+    pub fn add_sanitized_file(mut self, name: &str, path: &Path) -> Self {
         self.entries.push(DebugBundleEntry::SanitizedFile {
             name: name.to_string(),
             path: path.to_path_buf(),
@@ -531,7 +534,8 @@ impl DebugBundle {
     }
 
     /// Add doctor results to the bundle.
-    pub fn add_doctor_results(&mut self, results: &[NamedResult]) -> &mut Self {
+    #[must_use]
+    pub fn add_doctor_results(self, results: &[NamedResult]) -> Self {
         let report = DoctorRunner::format_report(results);
         self.add_text("doctor-report.txt", &report)
     }
