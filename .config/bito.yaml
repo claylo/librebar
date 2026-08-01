@@ -2,9 +2,10 @@
 # Edit freely. Re-run plugin setup to regenerate from defaults.
 
 dialect: en-us
-max_grade: 12.0
-passive_max_percent: 15.0
+max_grade: 15.0
+passive_max_percent: 12.0
 tokenizer: claude
+log_dir: /Users/clay/source/logs
 
 rules:
   - paths: [".handoffs/*.md"]
@@ -19,18 +20,18 @@ rules:
       completeness:
         template: adr
       readability:
-        max_grade: 12.0
+        max_grade: 15.0
 
   - paths: ["record/designs/*.md"]
     checks:
       completeness:
         template: design-doc
       readability:
-        max_grade: 12.0
+        max_grade: 15.0
 
   - paths: ["docs/**/*.md", "README.md"]
     checks:
       readability:
         max_grade: 12.0
       grammar:
-        passive_max: 15.0
+        passive_max: 10.0
