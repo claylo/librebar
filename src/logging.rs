@@ -415,6 +415,12 @@ fn write_sink_failure(mut writer: impl Write) {
     let _ = writeln!(writer, "[librebar] failed to write log entry to sink");
 }
 
+fn merge_span_fields(output: &mut Map<String, Value>, fields: &Map<String, Value>) {
+    for (key, value) in fields {
+        output.insert(key.clone(), value.clone());
+    }
+}
+
 impl<S, W> tracing_subscriber::Layer<S> for JsonLogLayer<W>
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
@@ -476,7 +482,7 @@ where
         if let Some(scope) = ctx.event_scope(event) {
             for span in scope.from_root() {
                 if let Some(fields) = span.extensions().get::<SpanFields>() {
-                    map.extend(fields.values.clone());
+                    merge_span_fields(&mut map, &fields.values);
                 }
             }
         }
@@ -498,8 +504,8 @@ where
 }
 
 /// Span extension data: the accumulated key-value fields recorded on a span.
-/// Stored in span extensions and cloned into each event emitted within the span.
-#[derive(Clone, Debug)]
+/// Stored in span extensions and merged into each event emitted within the span.
+#[derive(Debug)]
 struct SpanFields {
     values: Map<String, Value>,
 }
@@ -585,5 +591,16 @@ mod tests {
     #[test]
     fn sink_failure_notice_ignores_broken_stderr() {
         write_sink_failure(BrokenWriter);
+    }
+
+    #[test]
+    fn merge_span_fields_preserves_root_to_leaf_precedence() {
+        let mut output =
+            Map::from_iter([("request_id".to_owned(), Value::String("root".to_owned()))]);
+        let leaf = Map::from_iter([("request_id".to_owned(), Value::String("leaf".to_owned()))]);
+
+        merge_span_fields(&mut output, &leaf);
+
+        assert_eq!(output["request_id"], "leaf");
     }
 }
