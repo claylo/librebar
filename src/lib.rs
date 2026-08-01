@@ -141,6 +141,7 @@
 //! 3. Return [`App<C>`] holding all initialized state and guards
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 #[cfg(all(
     doctest,

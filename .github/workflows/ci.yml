@@ -47,6 +47,9 @@ jobs:
       - name: clippy
         run: just clippy
 
+      - name: rustdoc
+        run: just doc
+
   test:
     name: test
     runs-on: ubuntu-latest

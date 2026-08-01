@@ -67,7 +67,7 @@ impl Cache {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Cache`] if the entry cannot be written.
+    /// Returns [`Error::Cache`](crate::Error::Cache) if the entry cannot be written.
     pub fn set(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
         std::fs::create_dir_all(&self.dir).map_err(CacheError::from)?;
 
@@ -95,7 +95,7 @@ impl Cache {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Cache`] on I/O or deserialization errors.
+    /// Returns [`Error::Cache`](crate::Error::Cache) on I/O or deserialization errors.
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let path = self.key_path(key);
         let data = match std::fs::read(&path) {
@@ -129,7 +129,7 @@ impl Cache {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Cache`] on I/O errors (missing entries are not errors).
+    /// Returns [`Error::Cache`](crate::Error::Cache) on I/O errors (missing entries are not errors).
     pub fn remove(&self, key: &str) -> Result<()> {
         let path = self.key_path(key);
         match std::fs::remove_file(&path) {
@@ -143,7 +143,7 @@ impl Cache {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Cache`] if the cache directory cannot be read.
+    /// Returns [`Error::Cache`](crate::Error::Cache) if the cache directory cannot be read.
     pub fn clear(&self) -> Result<()> {
         if self.dir.exists() {
             for entry in std::fs::read_dir(&self.dir)

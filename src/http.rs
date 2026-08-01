@@ -516,7 +516,7 @@ impl HttpClient {
     ///
     /// # Errors
     ///
-    /// - [`Error::Http`] — invalid URL, connection failure, TLS error,
+    /// - [`Error::Http`](crate::Error::Http) — invalid URL, connection failure, TLS error,
     ///   timeout, or I/O error while reading the response body.
     pub async fn get(&self, url: &str) -> Result<Response> {
         self.request(Method::GET, url, []).await

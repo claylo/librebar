@@ -39,6 +39,9 @@ test-ci:
 doc-test:
   cargo test --doc --all-features
 
+doc:
+  cargo doc --all-features --no-deps
+
 # Compile the default, empty, all-features, and every individual feature set.
 # --no-dev-deps prevents dev-dependency feature unification from hiding a
 # missing optional dependency edge in a published configuration.
@@ -54,7 +57,7 @@ cov:
   @cargo llvm-cov report --html
   @cargo llvm-cov report --summary-only --json --output-path target/llvm-cov/summary.json
 
-check: fmt-check clippy deny test doc-test
+check: fmt-check clippy deny test doc-test doc
 
 # Check for outdated dependencies (root only, no transitive noise)
 outdated:
