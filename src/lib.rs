@@ -35,6 +35,7 @@
 //! | Feature | Module | Use when your app needs... |
 //! |---------|--------|---------------------------|
 //! | `otel` | [`otel`] | OpenTelemetry tracing export (OTLP/HTTP) |
+//! | `otel-http-json` | [`otel`] | OpenTelemetry via OTLP/HTTP with JSON encoding |
 //! | `otel-grpc` | [`otel`] | OpenTelemetry via gRPC (adds Tonic transport) |
 //! | `mcp` | [`mcp`] | Model Context Protocol server support |
 //!
@@ -63,6 +64,7 @@
 //! - `dispatch` implies `cli` (subcommand dispatch extends the CLI)
 //! - `diagnostics` implies `config` + `logging` (bundles need config sources and log paths)
 //! - `otel` implies `logging` (OTEL layer composes with the tracing subscriber)
+//! - `otel-http-json` implies `otel`
 //! - `otel-grpc` implies `otel`
 //!
 //! ## Typical feature sets

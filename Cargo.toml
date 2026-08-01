@@ -158,6 +158,7 @@ logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:serde_json", "
 shutdown = ["dep:tokio"]
 crash = ["dep:serde_json"]
 otel = ["logging", "dep:async-trait", "dep:opentelemetry", "dep:opentelemetry-http", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tokio"]
+otel-http-json = ["otel", "opentelemetry-otlp/http-json"]
 otel-grpc = ["otel", "opentelemetry-otlp/grpc-tonic"]
 mcp = ["dep:rmcp", "dep:tokio"]
 lockfile = []

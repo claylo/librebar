@@ -21,7 +21,8 @@
 //! # Environment variables
 //!
 //! - `OTEL_EXPORTER_OTLP_ENDPOINT` — collector URL (required for export)
-//! - `OTEL_EXPORTER_OTLP_PROTOCOL` — `http/protobuf` (default), `http/json`, or `grpc`
+//! - `OTEL_EXPORTER_OTLP_PROTOCOL` — `http/protobuf` (default), `http/json`
+//!   (requires `otel-http-json`), or `grpc` (requires `otel-grpc`)
 //! - `{APP}_ENV` — deployment environment label (defaults to `"dev"`)
 
 use crate::error::Result;
@@ -162,29 +163,50 @@ pub fn build_otel_layer(cfg: &OtelConfig) -> Result<(Option<BoxedLayer>, Option<
 
 /// Build the span exporter based on the protocol string.
 fn build_exporter(endpoint: &str, protocol: &str) -> Result<opentelemetry_otlp::SpanExporter> {
-    use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
-
     match protocol {
         #[cfg(feature = "otel-grpc")]
-        "grpc" => opentelemetry_otlp::SpanExporter::builder()
-            .with_tonic()
-            .with_endpoint(endpoint)
-            .build()
-            .map_err(crate::Error::OtelInit),
+        "grpc" => {
+            use opentelemetry_otlp::WithExportConfig as _;
 
-        // http/protobuf, http/json, or anything else — use HTTP transport
-        _ => {
-            let timeout = otlp_trace_timeout();
-            let client = blocking_hyper::BlockingHyperClient::new(timeout)?;
             opentelemetry_otlp::SpanExporter::builder()
-                .with_http()
-                .with_http_client(client)
+                .with_tonic()
                 .with_endpoint(endpoint)
-                .with_timeout(timeout)
                 .build()
                 .map_err(crate::Error::OtelInit)
         }
+
+        #[cfg(feature = "otel-http-json")]
+        "http/json" => build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpJson),
+
+        #[cfg(not(feature = "otel-http-json"))]
+        "http/json" => Err(crate::Error::OtelInit(
+            opentelemetry_otlp::ExporterBuildError::InvalidConfig {
+                name: "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
+                reason: "http/json requires librebar feature 'otel-http-json'".to_string(),
+            },
+        )),
+
+        // http/protobuf or anything else — preserve the protobuf default.
+        _ => build_http_exporter(endpoint, opentelemetry_otlp::Protocol::HttpBinary),
     }
+}
+
+fn build_http_exporter(
+    endpoint: &str,
+    protocol: opentelemetry_otlp::Protocol,
+) -> Result<opentelemetry_otlp::SpanExporter> {
+    use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
+
+    let timeout = otlp_trace_timeout();
+    let client = blocking_hyper::BlockingHyperClient::new(timeout)?;
+    opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_http_client(client)
+        .with_endpoint(endpoint)
+        .with_timeout(timeout)
+        .with_protocol(protocol)
+        .build()
+        .map_err(crate::Error::OtelInit)
 }
 
 fn otlp_trace_timeout() -> std::time::Duration {

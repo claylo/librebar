@@ -110,6 +110,34 @@ fn request_is_complete(request: &[u8]) -> bool {
     request.len() >= header_end + 4 + content_length
 }
 
+fn export_span(receiver: OtlpReceiver) -> Vec<u8> {
+    let cfg = OtelConfig::from_app_name("test-app", "0.1.0").with_endpoint(Some(receiver.endpoint));
+    let (layer, guard) = librebar::otel::build_otel_layer(&cfg).expect("build OTLP layer");
+    let subscriber = tracing_subscriber::registry().with(layer);
+
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info_span!("exported-span").in_scope(|| {});
+    });
+    drop(guard);
+
+    let request = receiver
+        .request
+        .recv_timeout(Duration::from_secs(7))
+        .expect("OTLP receiver thread stopped")
+        .expect("receive OTLP request");
+    receiver.server.join().expect("join OTLP receiver");
+    request
+}
+
+fn request_parts(request: &[u8]) -> (&str, &[u8]) {
+    let header_end = request
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("OTLP request has headers");
+    let headers = std::str::from_utf8(&request[..header_end]).expect("OTLP headers are UTF-8");
+    (headers, &request[header_end + 4..])
+}
+
 #[test]
 fn otel_config_from_app_name() {
     let _guard = clear_otel_env();
@@ -151,33 +179,49 @@ fn build_layer_returns_none_without_endpoint() {
 #[test]
 fn http_export_reaches_collector_without_async_runtime() {
     let _guard = clear_otel_env();
-    let receiver = spawn_otlp_receiver();
-    let cfg = OtelConfig::from_app_name("test-app", "0.1.0").with_endpoint(Some(receiver.endpoint));
-    let (layer, guard) = librebar::otel::build_otel_layer(&cfg).expect("build OTLP layer");
-    let subscriber = tracing_subscriber::registry().with(layer);
-
-    tracing::subscriber::with_default(subscriber, || {
-        tracing::info_span!("exported-span").in_scope(|| {});
-    });
-    drop(guard);
-
-    let request = receiver
-        .request
-        .recv_timeout(Duration::from_secs(7))
-        .expect("OTLP receiver thread stopped")
-        .expect("receive OTLP request");
-    receiver.server.join().expect("join OTLP receiver");
-
-    let header_end = request
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .expect("OTLP request has headers");
-    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let request = export_span(spawn_otlp_receiver());
+    let (headers, body) = request_parts(&request);
     assert!(headers.starts_with("POST "));
     assert!(
         headers
             .lines()
             .any(|line| line.eq_ignore_ascii_case("content-type: application/x-protobuf"))
     );
-    assert!(request.len() > header_end + 4, "OTLP request has a body");
+    assert!(!body.is_empty(), "OTLP request has a body");
+}
+
+#[cfg(feature = "otel-http-json")]
+#[test]
+fn http_json_protocol_sends_json() {
+    let _guard = clear_otel_env();
+    // SAFETY: ENV_LOCK serializes env-touching tests in this file.
+    unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json") };
+
+    let request = export_span(spawn_otlp_receiver());
+    let (headers, body) = request_parts(&request);
+    assert!(
+        headers
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("content-type: application/json"))
+    );
+    let body: serde_json::Value = serde_json::from_slice(body).expect("OTLP body is JSON");
+    assert!(body.to_string().contains("exported-span"));
+}
+
+#[cfg(not(feature = "otel-http-json"))]
+#[test]
+fn http_json_protocol_requires_feature() {
+    let _guard = clear_otel_env();
+    // SAFETY: ENV_LOCK serializes env-touching tests in this file.
+    unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json") };
+    let cfg = OtelConfig::from_app_name("test-app", "0.1.0")
+        .with_endpoint(Some("http://127.0.0.1:4318".to_string()));
+
+    let result = librebar::otel::build_otel_layer(&cfg);
+    assert!(result.is_err(), "http/json requires otel-http-json");
+    assert!(
+        result
+            .err()
+            .is_some_and(|error| error.to_string().contains("otel-http-json"))
+    );
 }

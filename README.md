@@ -107,6 +107,7 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 | `update` | "Update available" notifications via the GitHub releases API (24-hour cache) |
 | `shutdown` | Graceful shutdown with SIGINT/SIGTERM handling via `tokio::sync::watch` |
 | `otel` | OpenTelemetry tracing export via OTLP/HTTP |
+| `otel-http-json` | OpenTelemetry via OTLP/HTTP with JSON encoding |
 | `otel-grpc` | OpenTelemetry via gRPC (adds Tonic transport) |
 | `mcp` | Model Context Protocol server support (rmcp wrapper) |
 | `lockfile` | Exclusive file locks to prevent concurrent instances |
@@ -119,7 +120,7 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 | `bench` | Wall-clock benchmarks via [divan](https://crates.io/crates/divan) (any platform) |
 | `bench-gungraun` | Instruction-count benchmarks via [gungraun](https://crates.io/crates/gungraun) / Valgrind (Linux/Intel) |
 
-Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; `http-cache` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-grpc` → `otel`.
+Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; `http-cache` → `http` + `cache`; `dispatch` → `cli`; `diagnostics` → `config` + `logging`; `otel` → `logging`; `otel-http-json` → `otel`; `otel-grpc` → `otel`.
 
 ## Typical feature sets
 
@@ -645,6 +646,11 @@ Any OTLP/HTTP receiver works the same way — Jaeger's `all-in-one` image,
 the OpenTelemetry Collector, or commercial backends (Honeycomb, Grafana
 Cloud, etc.). Point `OTEL_EXPORTER_OTLP_ENDPOINT` at their ingest URL and
 spans flow.
+
+OTLP/HTTP uses protobuf encoding by default. To send JSON, enable the
+`otel-http-json` feature and set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
+Requesting JSON without the feature returns a configuration error rather than
+silently sending protobuf.
 
 ## Versioning
 
