@@ -14,6 +14,19 @@
 //! - GET, POST, PUT, PATCH, DELETE, and arbitrary [`Request`] support
 //! - [`Response`] metadata with lossless repeated headers and trailers
 //!
+//! # TLS trust anchors
+//!
+//! HTTPS certificate verification is always enabled. The default connector uses
+//! Mozilla's CA root set from `webpki-roots`, compiled into the application
+//! binary through `hyper-rustls`. It does not pick up trust-store changes from
+//! the operating system after that binary is built.
+//!
+//! Applications that ship long-lived binaries should rebuild and re-release
+//! when `webpki-roots` changes, especially after a CA is added or distrusted.
+//! Librebar will promptly update its `hyper-rustls` dependency when the root
+//! program changes. Consumers that require OS-managed or private enterprise
+//! roots need a different connector; Librebar does not expose one today.
+//!
 //! # Example
 //!
 //! ```no_run
