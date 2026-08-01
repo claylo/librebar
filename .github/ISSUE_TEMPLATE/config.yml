@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Contributing
+    url: https://github.com/claylo/librebar/blob/main/CONTRIBUTING.md
+    about: Read the setup, checks, and pull request conventions
   - name: Questions & Discussion
     url: https://github.com/claylo/librebar/discussions
     about: Ask questions, share ideas, or discuss before opening an issue

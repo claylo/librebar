@@ -1,5 +1,10 @@
 # Librebar
 
+[![CI](https://github.com/claylo/librebar/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/claylo/librebar/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/librebar.svg)](https://crates.io/crates/librebar)
+[![docs.rs](https://docs.rs/librebar/badge.svg)](https://docs.rs/librebar)
+[![MSRV](https://img.shields.io/badge/MSRV-1.89.0-blue.svg)](#msrv)
+
 Opinionated application foundation for Rust CLIs and services. Add one dependency and get an agent-ready CLI, layered config with environment overrides, structured logging, crash dumps, file caching, and a diagnostics bundle — out of the box.
 
 ```rust,no_run
@@ -696,6 +701,11 @@ and earlier signal makes for a better 1.0.
 
 Until then, pin to a specific minor version (`librebar = "0.3"`) if you
 want the patch-only guarantee.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the local checks, pull request
+title format, and template to use for each kind of change.
 
 ## License
 
