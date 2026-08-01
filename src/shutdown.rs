@@ -4,6 +4,13 @@
 //! for waiting on the shutdown signal. Uses `tokio::sync::watch` so multiple
 //! consumers can await shutdown without ownership issues.
 //!
+//! # Signal behavior
+//!
+//! Registering signal handlers permanently replaces the platform's default
+//! SIGINT and SIGTERM behavior for the process. The first signal requests
+//! graceful shutdown; a later signal forces an immediate exit with the
+//! conventional signal-derived status code.
+//!
 //! # Usage
 //!
 //! ```no_run
@@ -21,6 +28,57 @@
 //! ```
 
 use tokio::sync::watch;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownSignal {
+    Interrupt,
+    #[cfg(unix)]
+    Terminate,
+}
+
+impl ShutdownSignal {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            #[cfg(unix)]
+            Self::Terminate => "SIGTERM",
+        }
+    }
+
+    const fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            #[cfg(unix)]
+            Self::Terminate => 143,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignalAction {
+    Shutdown,
+    Exit(i32),
+}
+
+fn action_for_signal(handle: &ShutdownHandle, signal: ShutdownSignal) -> SignalAction {
+    if handle.is_shutting_down() {
+        SignalAction::Exit(signal.exit_code())
+    } else {
+        handle.shutdown();
+        SignalAction::Shutdown
+    }
+}
+
+#[cfg(any(test, not(unix)))]
+fn ctrl_c_signal(result: std::io::Result<()>) -> Option<ShutdownSignal> {
+    match result {
+        Ok(()) => Some(ShutdownSignal::Interrupt),
+        Err(error) => {
+            tracing::error!(%error, "failed to listen for Ctrl-C; signal task exiting");
+            None
+        }
+    }
+}
 
 /// Handle for triggering and observing shutdown.
 ///
@@ -60,14 +118,21 @@ impl ShutdownHandle {
 
     /// Register OS signal handlers (SIGTERM, SIGINT) that trigger shutdown.
     ///
-    /// Spawns a tokio task that listens for signals. The task exits when
-    /// a signal is received or when the handle is dropped.
+    /// Spawns a tokio task that remains active after the first signal. The
+    /// first signal requests graceful shutdown; a later signal forces an
+    /// immediate exit with status 130 for SIGINT or 143 for SIGTERM.
+    /// Registering these handlers permanently replaces the platform's default
+    /// signal behavior for the process.
     ///
     /// # Errors
     ///
     /// Returns an error if signal handler registration fails.
     pub fn register_signals(&self) -> crate::Result<()> {
         let runtime = tokio::runtime::Handle::try_current().map_err(crate::Error::NoRuntime)?;
+
+        #[cfg(unix)]
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .map_err(crate::Error::ShutdownInit)?;
 
         #[cfg(unix)]
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -77,19 +142,35 @@ impl ShutdownHandle {
 
         tracing::debug!("registering shutdown signal handlers");
         runtime.spawn(async move {
-            let ctrl_c = tokio::signal::ctrl_c();
+            loop {
+                #[cfg(unix)]
+                let signal = tokio::select! {
+                    received = sigint.recv() => received.map(|()| ShutdownSignal::Interrupt),
+                    received = sigterm.recv() => received.map(|()| ShutdownSignal::Terminate),
+                };
 
-            #[cfg(unix)]
-            tokio::select! {
-                _ = ctrl_c => {},
-                _ = sigterm.recv() => {},
+                #[cfg(not(unix))]
+                let signal = ctrl_c_signal(tokio::signal::ctrl_c().await);
+
+                let Some(signal) = signal else {
+                    tracing::error!("shutdown signal stream closed; signal task exiting");
+                    return;
+                };
+
+                match action_for_signal(&handle, signal) {
+                    SignalAction::Shutdown => {
+                        tracing::info!(signal = signal.name(), "shutdown signal received");
+                    }
+                    SignalAction::Exit(exit_code) => {
+                        tracing::warn!(
+                            signal = signal.name(),
+                            exit_code,
+                            "repeated shutdown signal received; forcing exit"
+                        );
+                        std::process::exit(exit_code);
+                    }
+                }
             }
-
-            #[cfg(not(unix))]
-            ctrl_c.await.ok();
-
-            tracing::info!("shutdown signal received");
-            handle.shutdown();
         });
 
         Ok(())
@@ -131,5 +212,48 @@ impl ShutdownToken {
     /// Check if shutdown has been triggered (non-async).
     pub fn is_shutting_down(&self) -> bool {
         *self.receiver.borrow()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::{ShutdownHandle, ShutdownSignal, SignalAction, action_for_signal, ctrl_c_signal};
+
+    #[test]
+    fn first_signal_requests_shutdown() {
+        let handle = ShutdownHandle::new();
+
+        assert_eq!(
+            action_for_signal(&handle, ShutdownSignal::Interrupt),
+            SignalAction::Shutdown
+        );
+        assert!(handle.is_shutting_down());
+    }
+
+    #[test]
+    fn signal_during_shutdown_requests_conventional_exit() {
+        let handle = ShutdownHandle::new();
+        handle.shutdown();
+
+        assert_eq!(
+            action_for_signal(&handle, ShutdownSignal::Interrupt),
+            SignalAction::Exit(130)
+        );
+
+        #[cfg(unix)]
+        assert_eq!(
+            action_for_signal(&handle, ShutdownSignal::Terminate),
+            SignalAction::Exit(143)
+        );
+    }
+
+    #[test]
+    fn ctrl_c_registration_errors_are_not_signals() {
+        let error = io::Error::other("registration failed");
+
+        assert_eq!(ctrl_c_signal(Err(error)), None);
+        assert_eq!(ctrl_c_signal(Ok(())), Some(ShutdownSignal::Interrupt));
     }
 }
