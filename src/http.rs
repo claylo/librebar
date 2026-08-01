@@ -524,10 +524,11 @@ impl HttpClient {
 
     /// Perform an RFC-aware cached GET using an explicit cache and key.
     ///
-    /// A key identifies one stored representation. Include tenant, locale, or
-    /// media-type distinctions in the key when callers intentionally need
-    /// multiple variants. Cache files can contain complete API responses and
-    /// are therefore written as private data.
+    /// A key identifies one stored representation. Include tenant, locale,
+    /// media-type, and requesting-identity distinctions whenever credentials may
+    /// select a different representation and the origin does not declare that
+    /// distinction with `Vary`. Cache files can contain complete API responses
+    /// and are therefore written as private data.
     ///
     /// # Errors
     ///

@@ -3,8 +3,8 @@ use std::time::{Duration, SystemTime};
 use base64::Engine as _;
 use http_cache_semantics::{AfterResponse, BeforeRequest, CacheOptions, CachePolicy};
 use hyper::header::{
-    AGE, AUTHORIZATION, CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, DATE,
-    HeaderMap, HeaderName, HeaderValue, PROXY_AUTHORIZATION, WARNING,
+    AGE, CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, DATE, HeaderMap, HeaderName,
+    HeaderValue, WARNING,
 };
 use hyper::{Method, Request, StatusCode, Version};
 use sha2::{Digest, Sha256};
@@ -14,8 +14,6 @@ use crate::cache::Cache;
 use crate::error::CacheError;
 use crate::{Error, Result};
 
-const SENSITIVE_REQUEST_HEADERS: [HeaderName; 3] =
-    [AUTHORIZATION, PROXY_AUTHORIZATION, hyper::header::COOKIE];
 const HTTP_CACHE_MAGIC: &[u8; 8] = b"LBRHT02\0";
 const HTTP_CACHE_FOOTER_LEN: usize = 16;
 const HTTP_CACHE_FORMAT_VERSION: u8 = 2;
@@ -207,13 +205,22 @@ fn decode_entry(mut bytes: Vec<u8>) -> std::result::Result<CachedHttpEntry, Cach
     Ok(entry)
 }
 
-fn fingerprint_credentials(headers: &mut HeaderMap) {
-    for name in &SENSITIVE_REQUEST_HEADERS {
-        let values = headers.get_all(name).iter().cloned().collect::<Vec<_>>();
-        if values.is_empty() {
-            continue;
-        }
-        headers.remove(name);
+fn is_cleartext_policy_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "host" | "cache-control" | "pragma" | "if-none-match" | "if-modified-since"
+    )
+}
+
+fn fingerprint_request_headers(headers: &mut HeaderMap) {
+    let names = headers
+        .keys()
+        .filter(|name| !is_cleartext_policy_header(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    for name in names {
+        let values = headers.get_all(&name).iter().cloned().collect::<Vec<_>>();
+        headers.remove(&name);
         for value in values {
             let mut hasher = Sha256::new();
             hasher.update(b"librebar-http-cache-credential\0");
@@ -230,8 +237,11 @@ fn fingerprint_credentials(headers: &mut HeaderMap) {
     }
 }
 
-fn restore_wire_credentials(policy_headers: &mut HeaderMap, wire_headers: &HeaderMap) {
-    for name in &SENSITIVE_REQUEST_HEADERS {
+fn restore_wire_headers(policy_headers: &mut HeaderMap, wire_headers: &HeaderMap) {
+    for name in wire_headers
+        .keys()
+        .filter(|name| !is_cleartext_policy_header(name))
+    {
         policy_headers.remove(name);
         for value in wire_headers.get_all(name) {
             policy_headers.append(name.clone(), value.clone());
@@ -411,7 +421,7 @@ fn policy_request(wire: &Request<Bytes>) -> Result<Request<()>> {
         .body(())
         .map_err(crate::error::HttpError::RequestBuild)?;
     *request.headers_mut() = wire.headers().clone();
-    fingerprint_credentials(request.headers_mut());
+    fingerprint_request_headers(request.headers_mut());
     Ok(request)
 }
 
@@ -494,7 +504,7 @@ async fn revalidate(
         .body(Bytes::new())
         .map_err(crate::error::HttpError::RequestBuild)?;
     *wire_revalidation.headers_mut() = policy_revalidation.headers().clone();
-    restore_wire_credentials(wire_revalidation.headers_mut(), wire_request.headers());
+    restore_wire_headers(wire_revalidation.headers_mut(), wire_request.headers());
 
     let response = client.send(wire_revalidation).await?;
     let response_time = SystemTime::now();
@@ -676,7 +686,10 @@ mod tests {
 
     use http_cache_semantics::BeforeRequest;
     use http_cache_semantics::{CacheOptions, CachePolicy};
-    use hyper::header::{CACHE_CONTROL, COOKIE, LINK, SET_COOKIE};
+    use hyper::header::{
+        AUTHORIZATION, CACHE_CONTROL, COOKIE, IF_MODIFIED_SINCE, IF_NONE_MATCH, LINK,
+        PROXY_AUTHORIZATION, SET_COOKIE,
+    };
     use hyper::{Request, StatusCode};
 
     use super::*;
@@ -705,12 +718,15 @@ mod tests {
     }
 
     #[test]
-    fn policy_view_fingerprints_request_credentials() {
+    fn policy_view_fingerprints_all_non_policy_request_headers() {
         let mut request = Request::builder()
             .uri("https://example.test/private")
             .header(AUTHORIZATION, "Bearer super-secret")
             .header(PROXY_AUTHORIZATION, "Basic proxy-secret")
             .header(COOKIE, "session=also-secret")
+            .header("x-api-key", "api-secret")
+            .header("private-token", "private-secret")
+            .header("x-opaque-credential", "opaque-secret")
             .body(())
             .unwrap();
         let response = hyper::Response::builder()
@@ -719,7 +735,7 @@ mod tests {
             .body(())
             .unwrap();
 
-        fingerprint_credentials(request.headers_mut());
+        fingerprint_request_headers(request.headers_mut());
         let policy = CachePolicy::new_options(
             &request,
             &response,
@@ -731,32 +747,116 @@ mod tests {
         );
         let serialized = serde_json::to_string(&policy).unwrap();
 
-        assert!(!serialized.contains("super-secret"));
-        assert!(!serialized.contains("proxy-secret"));
-        assert!(!serialized.contains("also-secret"));
-        assert!(request.headers().contains_key(AUTHORIZATION));
-        assert!(request.headers().contains_key(PROXY_AUTHORIZATION));
-        assert!(request.headers().contains_key(COOKIE));
+        for secret in [
+            "super-secret",
+            "proxy-secret",
+            "also-secret",
+            "api-secret",
+            "private-secret",
+            "opaque-secret",
+        ] {
+            assert!(
+                !serialized.contains(secret),
+                "persisted request secret: {secret}"
+            );
+        }
     }
 
     #[test]
-    fn wire_credentials_replace_policy_fingerprints_before_send() {
+    fn policy_view_keeps_cache_semantics_fields_cleartext() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("example.test"));
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static("max-age=30"));
+        headers.insert("pragma", HeaderValue::from_static("no-cache"));
+        headers.insert(IF_NONE_MATCH, HeaderValue::from_static("\"client-v1\""));
+        headers.insert(
+            IF_MODIFIED_SINCE,
+            HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
+
+        fingerprint_request_headers(&mut headers);
+
+        assert_eq!(headers["host"], "example.test");
+        assert_eq!(headers[CACHE_CONTROL], "max-age=30");
+        assert_eq!(headers["pragma"], "no-cache");
+        assert_eq!(headers[IF_NONE_MATCH], "\"client-v1\"");
+        assert_eq!(headers[IF_MODIFIED_SINCE], "Wed, 21 Oct 2015 07:28:00 GMT");
+    }
+
+    #[test]
+    fn wire_headers_replace_fingerprints_without_clobbering_policy_validators() {
         let wire = Request::builder()
             .uri("https://example.test/private")
             .header(AUTHORIZATION, "Bearer real")
             .header(PROXY_AUTHORIZATION, "Basic proxy-real")
             .header(COOKIE, "session=real")
+            .header("x-api-key", "api-real")
+            .header(IF_NONE_MATCH, "\"wire-validator\"")
             .body(())
             .unwrap();
         let mut policy_headers = wire.headers().clone();
-        fingerprint_credentials(&mut policy_headers);
+        fingerprint_request_headers(&mut policy_headers);
+        policy_headers.insert(
+            IF_NONE_MATCH,
+            HeaderValue::from_static("\"policy-validator\""),
+        );
 
-        restore_wire_credentials(&mut policy_headers, wire.headers());
+        restore_wire_headers(&mut policy_headers, wire.headers());
 
         assert_eq!(policy_headers[AUTHORIZATION], "Bearer real");
         assert_eq!(policy_headers[PROXY_AUTHORIZATION], "Basic proxy-real");
         assert_eq!(policy_headers[COOKIE], "session=real");
+        assert_eq!(policy_headers["x-api-key"], "api-real");
+        assert_eq!(policy_headers[IF_NONE_MATCH], "\"policy-validator\"");
         assert!(!format!("{policy_headers:?}").contains("sha256:"));
+    }
+
+    #[test]
+    fn vary_matches_fingerprinted_request_headers() {
+        let now = SystemTime::now();
+        let mut stored_request = Request::builder()
+            .uri("https://example.test/private")
+            .header("x-api-key", "profile-a")
+            .body(())
+            .unwrap();
+        fingerprint_request_headers(stored_request.headers_mut());
+        let response = hyper::Response::builder()
+            .status(StatusCode::OK)
+            .header(CACHE_CONTROL, "private, max-age=60")
+            .header("vary", "x-api-key")
+            .body(())
+            .unwrap();
+        let policy = CachePolicy::new_options(
+            &stored_request,
+            &response,
+            now,
+            CacheOptions {
+                shared: false,
+                ..CacheOptions::default()
+            },
+        );
+
+        let mut same = Request::builder()
+            .uri("https://example.test/private")
+            .header("x-api-key", "profile-a")
+            .body(())
+            .unwrap();
+        fingerprint_request_headers(same.headers_mut());
+        let mut different = Request::builder()
+            .uri("https://example.test/private")
+            .header("x-api-key", "profile-b")
+            .body(())
+            .unwrap();
+        fingerprint_request_headers(different.headers_mut());
+
+        assert!(matches!(
+            policy.before_request(&same, now),
+            BeforeRequest::Fresh(_)
+        ));
+        assert!(matches!(
+            policy.before_request(&different, now),
+            BeforeRequest::Stale { matches: false, .. }
+        ));
     }
 
     #[test]
