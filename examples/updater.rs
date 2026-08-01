@@ -35,10 +35,10 @@
 //!   you can point it at any GitHub project and see the cache + comparison
 //!   flow without rebuilding.
 //! - The 24h cache is transparent inside `check()`; the `info` subcommand
-//!   peeks at the cache directly so you can see the stored tag after the
+//!   peeks at the cache directly so you can see the stored release after the
 //!   first network round-trip, and `clear-cache` wipes it.
-//! - `check()` is `async` because librebar's HTTPS client is `hyper`-based.
-//!   A `current_thread` tokio runtime is enough — no threads are spawned.
+//! - `check()` uses Librebar's asynchronous HTTPS client. A `current_thread`
+//!   tokio runtime is enough — no threads are spawned.
 //!
 //! # Rate limits
 //!
@@ -56,7 +56,7 @@ const DEFAULT_REPO: &str = "BurntSushi/ripgrep";
 // Low sentinel so the fetched latest-tag always compares as newer — the
 // example is about the cache and env wiring, not realistic version tracking.
 const DEFAULT_PRETEND_VERSION: &str = "0.0.1";
-const CACHE_KEY: &str = "latest-version";
+const CACHE_KEY: &str = "latest-release";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -134,8 +134,11 @@ async fn main() -> Result<()> {
 
 async fn run_check(app: &librebar::App<Config>) -> Result<()> {
     let config = app.config();
-    let checker =
-        librebar::update::UpdateChecker::new(app.app_name(), &config.pretend_version, &config.repo);
+    let checker = librebar::update::UpdateChecker::github(
+        app.app_name(),
+        &config.pretend_version,
+        &config.repo,
+    )?;
 
     if checker.is_suppressed() {
         println!(
@@ -149,7 +152,7 @@ async fn run_check(app: &librebar::App<Config>) -> Result<()> {
         "checking {} for releases (pretending to run v{})...",
         config.repo, config.pretend_version
     );
-    match checker.check().await {
+    match checker.check().await? {
         Some(info) => {
             tracing::info!(
                 latest = %info.latest,
@@ -159,8 +162,8 @@ async fn run_check(app: &librebar::App<Config>) -> Result<()> {
             println!("{}", info.message());
         }
         None => {
-            tracing::info!("no update available or check failed");
-            println!("no newer release found (or the check failed — run with -v for details)");
+            tracing::info!("no update available");
+            println!("no newer release found");
         }
     }
     Ok(())
@@ -184,8 +187,11 @@ fn print_info(app: &librebar::App<Config>) -> Result<()> {
     println!("cache dir:      {}", cache.dir().display());
     match cache_entry {
         Some(bytes) => {
-            let latest = String::from_utf8_lossy(&bytes);
-            println!("cache:          fresh — latest-version={latest}");
+            let release: librebar::update::ReleaseInfo = serde_json::from_slice(&bytes)?;
+            println!(
+                "cache:          fresh — latest-version={}, url={}",
+                release.version, release.url
+            );
         }
         None => println!("cache:          empty (next check will hit the network)"),
     }

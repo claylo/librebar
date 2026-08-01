@@ -1,25 +1,171 @@
-//! Update notifications via GitHub releases API.
+//! Update notifications from pluggable release sources.
 //!
-//! Checks for new versions by querying the GitHub releases API. Results
-//! are cached for 24 hours (when the `cache` feature is also enabled)
-//! to avoid repeated network hits. Respects `{APP}_NO_UPDATE_CHECK=1`
-//! to suppress checks entirely.
+//! [`UpdateChecker`] compares the current version with a [`ReleaseSource`].
+//! [`GitHubReleaseSource`] provides GitHub Releases support, including optional
+//! bearer authentication. Results are cached for 24 hours by default. Set
+//! `{APP}_NO_UPDATE_CHECK=1` to suppress checks entirely.
 //!
 //! # Example
 //!
 //! ```no_run
-//! # async fn example() {
-//! let checker = librebar::update::UpdateChecker::new("myapp", "0.1.0", "owner/repo");
-//! if let Some(update) = checker.check().await {
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let checker = librebar::update::UpdateChecker::github("myapp", "0.1.0", "owner/repo")?;
+//! if let Some(update) = checker.check().await? {
 //!     eprintln!("{}", update.message());
 //! }
+//! # Ok(())
 //! # }
 //! ```
 
 use std::time::Duration;
 
+use crate::error::{BoxError, boxed_error};
+use crate::http::{Bytes, HeaderValue, HttpClient, Method, Request, StatusCode, header};
+
+/// Re-export of [`async_trait`], used to implement [`ReleaseSource`].
+pub use async_trait::async_trait;
+
 const CACHE_TTL: Duration = Duration::from_secs(86400); // 24 hours
-const CACHE_KEY: &str = "latest-version";
+const CACHE_KEY: &str = "latest-release";
+
+/// Information returned by a release source.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[non_exhaustive]
+pub struct ReleaseInfo {
+    /// Latest available version.
+    pub version: String,
+    /// URL where the release can be viewed or installed.
+    pub url: String,
+}
+
+impl ReleaseInfo {
+    /// Create release information.
+    pub fn new(version: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            version: version.into(),
+            url: url.into(),
+        }
+    }
+}
+
+/// Backend that discovers the latest available release.
+#[async_trait]
+pub trait ReleaseSource: Send + Sync {
+    /// Fetch the latest release.
+    async fn latest_release(&self) -> std::result::Result<ReleaseInfo, BoxError>;
+}
+
+/// GitHub Releases backend.
+pub struct GitHubReleaseSource {
+    repo: String,
+    client: HttpClient,
+    api_base: String,
+    bearer_token: Option<String>,
+}
+
+impl GitHubReleaseSource {
+    /// Create a GitHub backend for an `owner/repo` repository.
+    pub fn new(repo: impl Into<String>, client: HttpClient) -> Self {
+        Self {
+            repo: repo.into(),
+            client,
+            api_base: "https://api.github.com".to_string(),
+            bearer_token: None,
+        }
+    }
+
+    /// Override the GitHub API base URL.
+    #[must_use]
+    pub fn with_api_base(mut self, api_base: impl Into<String>) -> Self {
+        self.api_base = api_base.into().trim_end_matches('/').to_string();
+        self
+    }
+
+    /// Authenticate GitHub requests with a bearer token.
+    #[must_use]
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.bearer_token = Some(token.into());
+        self
+    }
+}
+
+impl std::fmt::Debug for GitHubReleaseSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GitHubReleaseSource")
+            .field("repo", &self.repo)
+            .field("api_base", &self.api_base)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum GitHubReleaseError {
+    #[error("could not build the GitHub release request")]
+    BuildRequest(#[source] BoxError),
+    #[error("GitHub release request failed")]
+    Request(#[source] crate::Error),
+    #[error("GitHub release API returned {0}")]
+    Status(StatusCode),
+    #[error("GitHub release API returned invalid JSON")]
+    Decode(#[source] serde_json::Error),
+}
+
+#[derive(serde::Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+#[async_trait]
+impl ReleaseSource for GitHubReleaseSource {
+    async fn latest_release(&self) -> std::result::Result<ReleaseInfo, BoxError> {
+        let url = format!("{}/repos/{}/releases/latest", self.api_base, self.repo);
+        let mut request = Request::builder()
+            .method(Method::GET)
+            .uri(url)
+            .body(Bytes::new())
+            .map_err(|error| GitHubReleaseError::BuildRequest(boxed_error(error)))?;
+        if let Some(token) = &self.bearer_token {
+            let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|error| GitHubReleaseError::BuildRequest(boxed_error(error)))?;
+            value.set_sensitive(true);
+            request.headers_mut().insert(header::AUTHORIZATION, value);
+        }
+
+        let response = self
+            .client
+            .send(request)
+            .await
+            .map_err(GitHubReleaseError::Request)?;
+        if !response.is_success() {
+            return Err(Box::new(GitHubReleaseError::Status(response.status())));
+        }
+        let release: GitHubRelease =
+            serde_json::from_slice(response.bytes()).map_err(GitHubReleaseError::Decode)?;
+        let version = release
+            .tag_name
+            .strip_prefix('v')
+            .unwrap_or(&release.tag_name);
+        Ok(ReleaseInfo::new(version, release.html_url))
+    }
+}
+
+/// Failure while checking for an update.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum UpdateError {
+    /// The default GitHub HTTP client could not be constructed.
+    #[error("could not build the update HTTP client")]
+    Client(#[source] BoxError),
+    /// The configured release source could not determine the latest release.
+    #[error("release source failed")]
+    Source(#[source] BoxError),
+}
 
 /// Information about an available update.
 #[derive(Clone, Debug)]
@@ -56,27 +202,74 @@ impl UpdateInfo {
     }
 }
 
-/// Checks GitHub releases for new versions.
-#[derive(Debug)]
+/// Checks a release source for new versions.
 pub struct UpdateChecker {
     app_name: String,
     current_version: String,
-    repo: String,
     env_suppress: String,
+    source: Box<dyn ReleaseSource>,
+    cache: Option<crate::cache::Cache>,
+}
+
+impl std::fmt::Debug for UpdateChecker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("UpdateChecker")
+            .field("app_name", &self.app_name)
+            .field("current_version", &self.current_version)
+            .field("env_suppress", &self.env_suppress)
+            .field("source", &"<release source>")
+            .field("cache_enabled", &self.cache.is_some())
+            .finish()
+    }
 }
 
 impl UpdateChecker {
-    /// Create a new update checker.
-    ///
-    /// `repo` is the GitHub `owner/repo` string.
-    pub fn new(app_name: &str, current_version: &str, repo: &str) -> Self {
+    /// Create an update checker using an explicit release source.
+    pub fn new(
+        app_name: &str,
+        current_version: &str,
+        source: impl ReleaseSource + 'static,
+    ) -> Self {
         let prefix = app_name.to_uppercase().replace('-', "_");
         Self {
             app_name: app_name.to_string(),
             current_version: current_version.to_string(),
-            repo: repo.to_string(),
             env_suppress: format!("{prefix}_NO_UPDATE_CHECK"),
+            source: Box::new(source),
+            cache: crate::cache::Cache::default_for(app_name),
         }
+    }
+
+    /// Create an update checker using the GitHub Releases API.
+    ///
+    /// `repo` is the GitHub `owner/repo` string.
+    pub fn github(
+        app_name: &str,
+        current_version: &str,
+        repo: &str,
+    ) -> std::result::Result<Self, UpdateError> {
+        let client = HttpClient::from_app(app_name, current_version)
+            .map_err(|error| UpdateError::Client(boxed_error(error)))?;
+        Ok(Self::new(
+            app_name,
+            current_version,
+            GitHubReleaseSource::new(repo, client),
+        ))
+    }
+
+    /// Disable update-result caching.
+    #[must_use]
+    pub fn without_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+
+    /// Use an explicit cache for update results.
+    #[must_use]
+    pub fn with_cache(mut self, cache: crate::cache::Cache) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     /// Check if update checking is suppressed by environment variable.
@@ -96,69 +289,64 @@ impl UpdateChecker {
         &self.current_version
     }
 
-    /// Check for updates. Returns `Some(UpdateInfo)` if a newer version
-    /// is available, `None` otherwise.
+    /// Check for updates.
     ///
-    /// This does not block the async runtime and is best-effort. Network
-    /// errors, GitHub rate limits, and parse failures are logged at debug
-    /// level and return `None`.
+    /// Returns `Ok(Some(UpdateInfo))` when a newer version is available.
+    /// Suppressed checks and up-to-date releases return `Ok(None)`. Release
+    /// source failures return [`UpdateError`]. Cache failures are logged at
+    /// debug level and fall back to the configured source.
     #[tracing::instrument(skip(self), fields(app = %self.app_name, current = %self.current_version))]
-    pub async fn check(&self) -> Option<UpdateInfo> {
+    pub async fn check(&self) -> std::result::Result<Option<UpdateInfo>, UpdateError> {
         if self.is_suppressed() {
             tracing::debug!("update check suppressed by env");
-            return None;
+            return Ok(None);
         }
 
-        // Check cache first
-        if let Some(cache) = crate::cache::Cache::default_for(&self.app_name)
-            && let Ok(Some(cached)) = crate::cache::run_io(move || cache.get(CACHE_KEY)).await
-            && let Ok(version) = String::from_utf8(cached)
-        {
-            tracing::debug!(cached_version = %version, "using cached version check");
-            return self.compare_versions(&version);
+        if let Some(release) = self.cached_release().await {
+            tracing::debug!(latest_version = %release.version, "using cached update check");
+            return Ok(self.compare_versions_with_url(&release.version, &release.url));
         }
 
-        // Fetch from GitHub
-        let url = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
-        let client =
-            crate::http::HttpClient::from_app(&self.app_name, &self.current_version).ok()?;
-
-        let resp = match client.get(&url).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::debug!(error = %e, "update check failed");
-                return None;
-            }
-        };
-
-        if !resp.is_success() {
-            tracing::debug!(status = %resp.status(), "GitHub API returned non-200");
-            return None;
-        }
-
-        let json: serde_json::Value = match resp.json() {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::debug!(error = %e, "failed to parse release response");
-                return None;
-            }
-        };
-        let tag = json.get("tag_name")?.as_str()?;
-        let latest = tag.strip_prefix('v').unwrap_or(tag);
-        let html_url = json.get("html_url")?.as_str().unwrap_or("");
-
-        // Cache the result (best-effort: stale cache just means another API call)
-        if let Some(cache) = crate::cache::Cache::default_for(&self.app_name) {
-            let latest = latest.as_bytes().to_vec();
-            let _ = crate::cache::run_io(move || cache.set(CACHE_KEY, &latest, CACHE_TTL)).await;
-        }
-
-        self.compare_versions_with_url(latest, html_url)
+        let release = self
+            .source
+            .latest_release()
+            .await
+            .map_err(UpdateError::Source)?;
+        self.cache_release(&release).await;
+        Ok(self.compare_versions_with_url(&release.version, &release.url))
     }
 
-    fn compare_versions(&self, latest: &str) -> Option<UpdateInfo> {
-        let url = format!("https://github.com/{}/releases/tag/v{}", self.repo, latest);
-        self.compare_versions_with_url(latest, &url)
+    async fn cached_release(&self) -> Option<ReleaseInfo> {
+        let cache = self.cache.clone()?;
+        match crate::cache::run_io(move || cache.get(CACHE_KEY)).await {
+            Ok(Some(bytes)) => match serde_json::from_slice(&bytes) {
+                Ok(release) => Some(release),
+                Err(error) => {
+                    tracing::debug!(error = %error, "ignored invalid update cache entry");
+                    None
+                }
+            },
+            Ok(None) => None,
+            Err(error) => {
+                tracing::debug!(error = %error, "update cache read failed");
+                None
+            }
+        }
+    }
+
+    async fn cache_release(&self, release: &ReleaseInfo) {
+        let Some(cache) = self.cache.clone() else {
+            return;
+        };
+        let Ok(bytes) = serde_json::to_vec(release) else {
+            tracing::debug!("could not encode update cache entry");
+            return;
+        };
+        if let Err(error) =
+            crate::cache::run_io(move || cache.set(CACHE_KEY, &bytes, CACHE_TTL)).await
+        {
+            tracing::debug!(error = %error, "update cache write failed");
+        }
     }
 
     fn compare_versions_with_url(&self, latest: &str, url: &str) -> Option<UpdateInfo> {

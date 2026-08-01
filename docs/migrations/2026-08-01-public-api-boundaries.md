@@ -106,6 +106,33 @@ schema metadata keeps its existing constructors and builders.
 build, so Cargo feature unification no longer changes the struct's shape. The
 setting affects requests only when the `http-cache` feature is enabled.
 
+## Update release checks
+
+Replace the old `UpdateChecker::new(app, version, "owner/repo")` call with the
+GitHub shortcut. The constructor now returns a `Result`, and `check()` reports
+source failures instead of folding them into `None`:
+
+```rust
+# async fn check() -> Result<(), Box<dyn std::error::Error>> {
+use librebar::update::UpdateChecker;
+
+let checker = UpdateChecker::github("myapp", "0.4.0", "owner/repo")?;
+if let Some(update) = checker.check().await? {
+    eprintln!("{}", update.message());
+}
+# Ok(())
+# }
+```
+
+For another forge, registry, or release service, implement `ReleaseSource` and
+pass it to `UpdateChecker::new`. The source owns its transport and returns a
+complete `ReleaseInfo` containing the latest version and release URL. Use
+`with_cache` to inject a cache or `without_cache` to disable caching.
+
+GitHub callers that need authentication can construct `GitHubReleaseSource`
+with an `HttpClient`, add `with_bearer_token`, and pass that source to
+`UpdateChecker::new`.
+
 ## Remove redundant dependencies
 
 Run your normal checks, then look for direct dependencies that are no longer
