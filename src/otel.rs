@@ -27,6 +27,9 @@
 
 use crate::error::Result;
 
+/// Re-export of [`tracing_subscriber`], used by the OTEL layer API.
+pub use tracing_subscriber;
+
 mod blocking_hyper;
 #[cfg(feature = "otel-grpc")]
 mod blocking_tonic;

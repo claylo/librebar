@@ -125,13 +125,13 @@ pub enum HttpError {
     Tls(#[from] rustls::Error),
     /// URL could not be parsed.
     #[error("invalid URL: {0}")]
-    InvalidUrl(#[from] hyper::http::uri::InvalidUri),
+    InvalidUrl(#[from] http::uri::InvalidUri),
     /// HTTP request could not be constructed.
     #[error("request build: {0}")]
-    RequestBuild(#[from] hyper::http::Error),
+    RequestBuild(#[from] http::Error),
     /// HTTP header value is invalid.
     #[error("invalid header value: {0}")]
-    InvalidHeaderValue(#[from] hyper::header::InvalidHeaderValue),
+    InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     /// Connection, protocol, or middleware error during request.
     #[error("request: {0}")]
     Request(#[source] tower::BoxError),

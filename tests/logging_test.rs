@@ -7,7 +7,8 @@ use librebar::logging;
 
 #[test]
 fn env_filter_quiet_overrides() {
-    let filter = logging::env_filter(true, 0, "info");
+    let filter: logging::tracing_subscriber::filter::EnvFilter =
+        logging::env_filter(true, 0, "info");
     assert_eq!(filter.to_string(), "error");
 }
 

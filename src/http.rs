@@ -123,8 +123,9 @@ mod cookies;
 pub use cookies::{CookieJar, CookieLimits};
 
 mod response;
-pub use hyper::header::{HeaderMap, HeaderValue};
-pub use hyper::{Method, Request, StatusCode, Version};
+pub use http::header;
+pub use http::header::{AsHeaderName, HeaderMap, HeaderName, HeaderValue};
+pub use http::{Method, Request, StatusCode, Uri, Version};
 #[cfg(feature = "http-cache")]
 pub use response::CacheStatus;
 pub use response::{ConditionalResponse, ModificationCheck, Response, ResponseMetadata, Validator};
@@ -136,7 +137,7 @@ mod http_cache;
 use crate::Result;
 use crate::error::HttpError;
 
-pub use hyper::body::Bytes;
+pub use bytes::Bytes;
 
 // ─── Config ─────────────────────────────────────────────────────────
 
@@ -391,7 +392,7 @@ impl std::error::Error for RedirectError {}
 struct RedirectPolicy {
     maximum: usize,
     remaining: usize,
-    visited: HashSet<(Method, hyper::Uri)>,
+    visited: HashSet<(Method, Uri)>,
     credentials: FilterCredentials,
     user_agent: HeaderValue,
     cross_origin: bool,
@@ -410,7 +411,7 @@ impl RedirectPolicy {
     }
 }
 
-fn same_origin(left: &hyper::Uri, right: &hyper::Uri) -> bool {
+fn same_origin(left: &Uri, right: &Uri) -> bool {
     let default_port = match (left.scheme_str(), right.scheme_str()) {
         (Some(left_scheme), Some(right_scheme)) if left_scheme == right_scheme => match left_scheme
         {
@@ -427,8 +428,8 @@ fn same_origin(left: &hyper::Uri, right: &hyper::Uri) -> bool {
 }
 
 fn validate_redirect_target(
-    previous: &hyper::Uri,
-    location: &hyper::Uri,
+    previous: &Uri,
+    location: &Uri,
 ) -> std::result::Result<(), RedirectError> {
     if previous.scheme_str() == Some("https") && location.scheme_str() == Some("http") {
         return Err(RedirectError::Downgrade);
@@ -466,7 +467,7 @@ impl RedirectPolicyTrait<RequestBody, BoxError> for RedirectPolicy {
         if self.cross_origin {
             request
                 .headers_mut()
-                .insert(hyper::header::USER_AGENT, self.user_agent.clone());
+                .insert(header::USER_AGENT, self.user_agent.clone());
         }
     }
 
@@ -690,8 +691,8 @@ impl HttpClient {
         url: &str,
         body: impl AsRef<[u8]>,
     ) -> Result<Response> {
-        let uri: hyper::Uri = url.parse().map_err(HttpError::InvalidUrl)?;
-        let req = hyper::Request::builder()
+        let uri: Uri = url.parse().map_err(HttpError::InvalidUrl)?;
+        let req = Request::builder()
             .method(method)
             .uri(&uri)
             .body(Bytes::copy_from_slice(body.as_ref()))
@@ -799,12 +800,10 @@ impl HttpClient {
     }
 
     pub(super) fn prepare_request(&self, request: &mut Request<Bytes>) -> Result<()> {
-        if !request.headers().contains_key(hyper::header::USER_AGENT) {
-            let user_agent = hyper::header::HeaderValue::from_str(&self.config.user_agent)
+        if !request.headers().contains_key(header::USER_AGENT) {
+            let user_agent = HeaderValue::from_str(&self.config.user_agent)
                 .map_err(HttpError::InvalidHeaderValue)?;
-            request
-                .headers_mut()
-                .insert(hyper::header::USER_AGENT, user_agent);
+            request.headers_mut().insert(header::USER_AGENT, user_agent);
         }
         #[cfg(feature = "http-cookies")]
         if let Some(jar) = &self.cookie_jar {
@@ -815,12 +814,12 @@ impl HttpClient {
 }
 
 fn conditional_request(method: Method, url: &str, validator: &Validator) -> Result<Request<Bytes>> {
-    let uri: hyper::Uri = url.parse().map_err(HttpError::InvalidUrl)?;
+    let uri: Uri = url.parse().map_err(HttpError::InvalidUrl)?;
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(etag) = validator.etag() {
-        builder = builder.header(hyper::header::IF_NONE_MATCH, etag);
+        builder = builder.header(header::IF_NONE_MATCH, etag);
     } else if let Some(last_modified) = validator.last_modified() {
-        builder = builder.header(hyper::header::IF_MODIFIED_SINCE, last_modified);
+        builder = builder.header(header::IF_MODIFIED_SINCE, last_modified);
     }
     builder
         .body(Bytes::new())
@@ -828,7 +827,7 @@ fn conditional_request(method: Method, url: &str, validator: &Validator) -> Resu
         .map_err(Into::into)
 }
 
-fn sanitized_uri(uri: &hyper::Uri) -> String {
+fn sanitized_uri(uri: &Uri) -> String {
     let mut sanitized = String::new();
 
     if let Some(scheme) = uri.scheme_str() {

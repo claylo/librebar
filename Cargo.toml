@@ -65,6 +65,8 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 rmcp = { version = "2.2", features = ["server", "transport-io"], optional = true }
 
 # Feature: http
+bytes = { version = "1.12", optional = true }
+http = { version = "1.4", optional = true }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"], optional = true }
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1.9", features = ["client", "http1", "http2"], optional = true }
@@ -162,7 +164,7 @@ otel-http-json = ["otel", "opentelemetry-otlp/http-json"]
 otel-grpc = ["otel", "opentelemetry-otlp/grpc-tonic"]
 mcp = ["dep:rmcp", "dep:tokio"]
 lockfile = []
-http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio", "dep:serde_json", "dep:tower", "dep:tower-http"]
+http = ["dep:bytes", "dep:http", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio", "dep:serde_json", "dep:tower", "dep:tower-http"]
 http-cookies = ["http", "dep:cookie_store", "dep:atomic-write-file", "dep:publicsuffix", "dep:url"]
 http-cache = ["http", "cache", "dep:http-cache-semantics", "dep:sha2"]
 cache = ["dep:serde_json", "dep:directories", "dep:base64", "dep:tempfile"]

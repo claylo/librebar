@@ -11,7 +11,7 @@
 //! sees `--name Clay`.
 #![allow(missing_docs)]
 
-use clap::Parser;
+use librebar::cli::clap::Parser;
 
 #[derive(Parser)]
 #[command(

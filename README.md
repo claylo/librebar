@@ -9,7 +9,7 @@ Opinionated application foundation for Rust CLIs and services. Add one dependenc
 
 ```rust,no_run
 use anyhow::Result;
-use clap::Parser;
+use librebar::cli::clap::{self, Parser};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -161,9 +161,9 @@ client calls `with_cookie_jar()` or `with_cookie_jar_from()`.
 Embed `CommonArgs` into your own clap struct with `#[command(flatten)]`:
 
 ```rust,no_run
-# #[derive(clap::Subcommand)]
+# #[derive(librebar::cli::clap::Subcommand)]
 # enum Commands { Info }
-#[derive(clap::Parser)]
+#[derive(librebar::cli::clap::Parser)]
 struct Cli {
     #[command(flatten)]
     pub common: librebar::cli::CommonArgs,
@@ -193,12 +193,12 @@ redirected. An explicit format always wins. Use the typed result instead of
 branching on a boolean:
 
 ```rust,no_run
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {
 #     #[command(flatten)]
 #     common: librebar::cli::CommonArgs,
 # }
-# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
+# let cli = <Cli as librebar::cli::clap::Parser>::parse_from(["myapp"]);
 match cli.common.output_format() {
     librebar::cli::ResolvedOutputFormat::Text => println!("human output"),
     librebar::cli::ResolvedOutputFormat::Json => println!(r#"{{"mode":"json"}}"#),
@@ -217,13 +217,13 @@ Parsing a flag is not the same as acting on it. Call `apply` once after
 parsing and the whole set is live:
 
 ```rust,no_run
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {
 #     #[command(flatten)]
 #     common: librebar::cli::CommonArgs,
 # }
 # fn main() -> librebar::Result<()> {
-# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
+# let cli = <Cli as librebar::cli::clap::Parser>::parse_from(["myapp"]);
 if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
     return Ok(());
 }
@@ -236,7 +236,7 @@ if cli.common.apply(env!("CARGO_PKG_VERSION"))?.is_exit() {
 Use librebar's parser instead of calling Clap directly:
 
 ```rust,no_run
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {}
 let cli = librebar::cli::parse::<Cli>();
 # let _ = cli;
@@ -252,7 +252,7 @@ hints, groups, aliases, and conflicts. It cannot know whether a command mutates
 state or what its JSON and errors mean. Supply those facts explicitly:
 
 ```rust,no_run
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {}
 let metadata = librebar::cli::SchemaMetadata::new()
     .command(
@@ -297,7 +297,7 @@ For packaging, render one page or generate the complete visible command tree
 through `clap_mangen`:
 
 ```rust,no_run
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {}
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let mut page = Vec::new();
@@ -312,7 +312,7 @@ let paths = librebar::cli::generate_manpages::<Cli>("target/man")?;
 Nested filenames contain the full path (`myapp-widgets-list.1`), preventing
 same-named leaves in different command groups from overwriting each other.
 Both outputs include librebar-owned commands because schema, help, completions,
-and manpages all come from the same augmented `clap::Command`.
+and manpages all come from the same augmented `librebar::cli::clap::Command`.
 
 `apply` sets the color override, prints the version and returns
 `Startup::Exit` if `--version-only` was passed, and changes directory for
@@ -331,8 +331,8 @@ different order or want to handle `--version-only` themselves.
 For compact help (`-h` shows short help, `--help` shows long help):
 
 ```rust,no_run
-use clap::{CommandFactory, FromArgMatches};
-# #[derive(clap::Parser)]
+use librebar::cli::clap::{CommandFactory, FromArgMatches};
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {}
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 
@@ -548,13 +548,13 @@ The builder wires everything in the correct initialization order:
 ```rust,no_run
 # #[derive(Default, serde::Deserialize, serde::Serialize)]
 # struct Config {}
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {
 #     #[command(flatten)]
 #     common: librebar::cli::CommonArgs,
 # }
 # fn main() -> librebar::Result<()> {
-# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
+# let cli = <Cli as librebar::cli::clap::Parser>::parse_from(["myapp"]);
 // Full setup — CLI, config, logging, crash handler
 let app = librebar::init(env!("CARGO_PKG_NAME"))
     .with_cli(cli.common)
@@ -575,13 +575,13 @@ let cli_args = app.cli();
 Without config, `.start()` returns `App<()>`:
 
 ```rust,no_run
-# #[derive(clap::Parser)]
+# #[derive(librebar::cli::clap::Parser)]
 # struct Cli {
 #     #[command(flatten)]
 #     common: librebar::cli::CommonArgs,
 # }
 # fn main() -> librebar::Result<()> {
-# let cli = <Cli as clap::Parser>::parse_from(["myapp"]);
+# let cli = <Cli as librebar::cli::clap::Parser>::parse_from(["myapp"]);
 let app = librebar::init("myapp")
     .with_cli(cli.common)
     .logging()
@@ -688,6 +688,23 @@ The following changes are **not** breaking and can land in a patch:
 - Adding new optional config fields that have `#[serde(default)]`.
 - Internal refactoring, performance improvements, and dependency bumps
   that don't change the public surface.
+
+### Dependency types in public APIs
+
+Librebar exposes established ecosystem types when they are part of a feature's
+extension API. Reach those dependencies through the feature module that owns
+the contract: `cli::clap`, `config::serde_json`, `logging::tracing_subscriber`,
+`otel::tracing_subscriber`, and `mcp::rmcp`. HTTP protocol and buffer types are
+re-exported directly from `librebar::http`.
+
+Runtime implementation details remain private. In particular, Hyper is the
+HTTP transport rather than the public HTTP type boundary, and MCP's stdio
+helper does not expose Tokio's concrete stdin and stdout types. Changing a
+deliberately exposed dependency type follows the same versioning rules as any
+other public API change.
+
+See [Update dependency imports](docs/migrations/2026-08-01-public-api-boundaries.md)
+for the call-site changes and dependency cleanup steps.
 
 ### MSRV
 

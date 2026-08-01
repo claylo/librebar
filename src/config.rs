@@ -40,6 +40,9 @@ use serde_json::Value;
 
 use crate::error::{Error, Result};
 
+/// Re-export of [`serde_json`], used by the dynamic config APIs.
+pub use serde_json;
+
 mod environment;
 pub use environment::{EnvironmentSource, ProcessEnvironment, UnknownEnvironment};
 

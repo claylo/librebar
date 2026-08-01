@@ -58,9 +58,9 @@
 #![allow(missing_docs)]
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use librebar::cli::clap::{Parser, Subcommand};
 use librebar::mcp::ServiceExt;
-use rmcp::{
+use librebar::mcp::rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, ListToolsResult,

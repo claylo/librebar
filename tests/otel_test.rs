@@ -2,13 +2,13 @@
 #![cfg(feature = "otel")]
 
 use librebar::otel::OtelConfig;
+use librebar::otel::tracing_subscriber::layer::SubscriberExt as _;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing_subscriber::layer::SubscriberExt as _;
 
 // Process-global env vars are shared across threads. nextest sidesteps this
 // by running each test in its own process, but `cargo test` runs them on
@@ -114,7 +114,7 @@ fn request_is_complete(request: &[u8]) -> bool {
 fn export_span(receiver: OtlpReceiver) -> Vec<u8> {
     let cfg = OtelConfig::from_app_name("test-app", "0.1.0").with_endpoint(Some(receiver.endpoint));
     let (layer, guard) = librebar::otel::build_otel_layer(&cfg).expect("build OTLP layer");
-    let subscriber = tracing_subscriber::registry().with(layer);
+    let subscriber = librebar::otel::tracing_subscriber::registry().with(layer);
 
     tracing::subscriber::with_default(subscriber, || {
         tracing::info_span!("exported-span").in_scope(|| {});

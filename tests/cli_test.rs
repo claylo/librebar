@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
 #![cfg(feature = "cli")]
 
-use clap::Parser;
+use librebar::cli::clap;
+use librebar::cli::clap::Parser;
 
 /// Test harness that embeds librebar's CommonArgs the way a consumer would.
 #[derive(Parser, Debug)]

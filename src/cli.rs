@@ -17,6 +17,9 @@ use clap::Args;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
+/// Re-export of [`clap`], Librebar's CLI extension API.
+pub use clap;
+
 mod artifacts;
 mod parse;
 mod schema;

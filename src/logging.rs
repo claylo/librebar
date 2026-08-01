@@ -37,6 +37,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::error::Result;
 
+/// Re-export of [`tracing_subscriber`], used by the logging composition APIs.
+pub use tracing_subscriber;
+
 const LOG_FILE_SUFFIX: &str = ".jsonl";
 const DEFAULT_LOG_DIR_UNIX: &str = "/var/log";
 

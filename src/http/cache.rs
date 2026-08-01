@@ -1,12 +1,12 @@
 use std::time::{Duration, SystemTime};
 
 use base64::Engine as _;
-use http_cache_semantics::{AfterResponse, BeforeRequest, CacheOptions, CachePolicy};
-use hyper::header::{
+use http::header::{
     AGE, CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, DATE, HeaderMap, HeaderName,
     HeaderValue, WARNING,
 };
-use hyper::{Method, Request, StatusCode, Version};
+use http::{Method, Request, StatusCode, Version};
+use http_cache_semantics::{AfterResponse, BeforeRequest, CacheOptions, CachePolicy};
 use sha2::{Digest, Sha256};
 
 use super::{Bytes, CacheStatus, HttpClient, Response, ResponseMetadata};
@@ -161,13 +161,13 @@ enum CacheEntryError {
     #[error("invalid cached entry metadata: {0}")]
     Json(#[from] serde_json::Error),
     #[error("invalid cached header name: {0}")]
-    HeaderName(#[from] hyper::header::InvalidHeaderName),
+    HeaderName(#[from] http::header::InvalidHeaderName),
     #[error("invalid cached header value: {0}")]
-    HeaderValue(#[from] hyper::header::InvalidHeaderValue),
+    HeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error("invalid cached header encoding: {0}")]
     Base64(#[from] base64::DecodeError),
     #[error("invalid cached status: {0}")]
-    Status(#[from] hyper::http::status::InvalidStatusCode),
+    Status(#[from] http::status::InvalidStatusCode),
     #[error("unsupported cached HTTP version: {0}")]
     UnsupportedVersion(String),
     #[error("unsupported cache entry format version: {0}")]
@@ -348,7 +348,7 @@ fn merge_304_headers(stored: &HeaderMap, not_modified: &HeaderMap) -> HeaderMap 
         if [
             CONTENT_LENGTH,
             CONTENT_ENCODING,
-            hyper::header::TRANSFER_ENCODING,
+            http::header::TRANSFER_ENCODING,
             CONTENT_RANGE,
         ]
         .contains(name)
@@ -369,7 +369,7 @@ pub(super) async fn get_cached(
     key: &str,
     url: &str,
 ) -> Result<Response> {
-    let uri: hyper::Uri = url.parse().map_err(crate::error::HttpError::InvalidUrl)?;
+    let uri: http::Uri = url.parse().map_err(crate::error::HttpError::InvalidUrl)?;
     let mut wire_request = Request::builder()
         .method(Method::GET)
         .uri(uri)
@@ -506,7 +506,7 @@ async fn revalidate(
     key: &str,
     entry: CachedHttpEntry,
     original_policy_request: Request<()>,
-    policy_parts: hyper::http::request::Parts,
+    policy_parts: http::request::Parts,
     wire_request: Request<Bytes>,
 ) -> Result<Response> {
     let policy_revalidation = Request::from_parts(policy_parts, ());
@@ -701,13 +701,13 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 
-    use http_cache_semantics::BeforeRequest;
-    use http_cache_semantics::{CacheOptions, CachePolicy};
-    use hyper::header::{
+    use http::header::{
         AUTHORIZATION, CACHE_CONTROL, COOKIE, IF_MODIFIED_SINCE, IF_NONE_MATCH, LINK,
         PROXY_AUTHORIZATION, SET_COOKIE,
     };
-    use hyper::{Request, StatusCode};
+    use http::{Request, StatusCode};
+    use http_cache_semantics::BeforeRequest;
+    use http_cache_semantics::{CacheOptions, CachePolicy};
     #[cfg(feature = "logging")]
     use tracing::field::{Field, Visit};
     #[cfg(feature = "logging")]

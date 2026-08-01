@@ -4,8 +4,8 @@
 use std::ffi::OsString;
 use std::fs;
 
+use librebar::config::serde_json::{self, json};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tempfile::TempDir;
 
 // ─── camino re-export ───────────────────────────────────────────────

@@ -8,8 +8,8 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::task::{Context, Poll};
 
 use atomic_write_file::AtomicWriteFile;
-use hyper::header::{COOKIE, SET_COOKIE};
-use hyper::{Request, Response};
+use http::header::{COOKIE, SET_COOKIE};
+use http::{Request, Response};
 use tower::{BoxError, Service};
 use url::Url;
 
@@ -150,7 +150,7 @@ impl CookieJar {
         Ok(())
     }
 
-    fn request_header(&self, url: &Url) -> Option<hyper::header::HeaderValue> {
+    fn request_header(&self, url: &Url) -> Option<http::header::HeaderValue> {
         let store = self.read_store();
         cookie_header_value(store.get_request_values(url))
     }
@@ -332,7 +332,7 @@ fn evict_cookies<'a>(
     }
 }
 
-fn cookie_url(uri: &hyper::Uri) -> Option<Url> {
+fn cookie_url(uri: &http::Uri) -> Option<Url> {
     match Url::parse(&uri.to_string()) {
         Ok(url) => Some(url),
         Err(error) => {
@@ -344,12 +344,12 @@ fn cookie_url(uri: &hyper::Uri) -> Option<Url> {
 
 fn cookie_header_value<'a>(
     values: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> Option<hyper::header::HeaderValue> {
+) -> Option<http::header::HeaderValue> {
     let value = values
         .into_iter()
         .filter_map(|(name, value)| {
             let pair = format!("{name}={value}");
-            match hyper::header::HeaderValue::from_str(&pair) {
+            match http::header::HeaderValue::from_str(&pair) {
                 Ok(_) => Some(pair),
                 Err(error) => {
                     tracing::warn!(
@@ -366,7 +366,7 @@ fn cookie_header_value<'a>(
     if value.is_empty() {
         return None;
     }
-    match hyper::header::HeaderValue::from_str(&value) {
+    match http::header::HeaderValue::from_str(&value) {
         Ok(value) => Some(value),
         Err(error) => {
             tracing::warn!(%error, "failed to encode validated cookie header");

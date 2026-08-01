@@ -58,7 +58,7 @@
 #![allow(missing_docs)]
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use librebar::cli::clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 

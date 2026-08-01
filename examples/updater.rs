@@ -49,7 +49,7 @@
 #![allow(missing_docs)]
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use librebar::cli::clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_REPO: &str = "BurntSushi/ripgrep";

@@ -36,7 +36,7 @@
 #![allow(missing_docs)]
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use librebar::cli::clap::{Parser, Subcommand};
 use librebar::diagnostics::{CheckResult, CheckStatus, DebugBundle, DoctorCheck, DoctorRunner};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

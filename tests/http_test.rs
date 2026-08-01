@@ -11,10 +11,10 @@
 //
 //     cargo test --all-features -- --ignored
 
-use hyper::header::{ETAG, LAST_MODIFIED};
+use librebar::http::header::{ETAG, LAST_MODIFIED};
 use librebar::http::{
-    Bytes, ConditionalResponse, HeaderMap, HeaderValue, HttpClient, HttpClientConfig,
-    ModificationCheck, Request, RetryPolicy, StatusCode, Validator, Version,
+    AsHeaderName, Bytes, ConditionalResponse, HeaderMap, HeaderName, HeaderValue, HttpClient,
+    HttpClientConfig, ModificationCheck, Request, RetryPolicy, StatusCode, Uri, Validator, Version,
 };
 #[cfg(feature = "logging")]
 use std::collections::BTreeMap;
@@ -32,6 +32,23 @@ use flate2::write::GzEncoder;
 use tracing::field::{Field, Visit};
 #[cfg(feature = "logging")]
 use tracing_subscriber::layer::SubscriberExt as _;
+
+#[test]
+fn protocol_types_are_reachable_through_librebar() {
+    fn contains_header(headers: &HeaderMap, name: impl AsHeaderName) -> bool {
+        headers.contains_key(name)
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("x-librebar-test"),
+        HeaderValue::from_static("present"),
+    );
+    let uri: Uri = "https://example.com/path".parse().unwrap();
+
+    assert!(contains_header(&headers, "x-librebar-test"));
+    assert_eq!(uri.host(), Some("example.com"));
+}
 
 #[cfg(feature = "logging")]
 #[derive(Clone)]

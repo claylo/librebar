@@ -1,9 +1,7 @@
 use std::fmt;
 
-use hyper::header::{AsHeaderName, HeaderMap, HeaderValue};
-use hyper::{StatusCode, Version};
-
 use crate::error::HttpError;
+use crate::http::{AsHeaderName, HeaderMap, HeaderValue, StatusCode, Version, header};
 
 /// Metadata collected from an HTTP response.
 #[derive(Clone)]
@@ -242,8 +240,8 @@ impl Validator {
 
     /// Extract all available validators from response headers.
     pub fn from_headers(headers: &HeaderMap) -> Option<Self> {
-        let etag = headers.get(hyper::header::ETAG).cloned();
-        let last_modified = headers.get(hyper::header::LAST_MODIFIED).cloned();
+        let etag = headers.get(header::ETAG).cloned();
+        let last_modified = headers.get(header::LAST_MODIFIED).cloned();
         (etag.is_some() || last_modified.is_some()).then_some(Self {
             etag,
             last_modified,
