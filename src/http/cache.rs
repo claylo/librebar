@@ -389,7 +389,7 @@ pub(super) async fn get_cached(
                 Ok(response) => Ok(response),
                 Err(error) => {
                     tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
-                    let _ = remove_entry(cache, key).await;
+                    evict_entry(cache, key).await;
                     fetch_and_maybe_store(client, cache, key, wire_request).await
                 }
             }
@@ -407,7 +407,7 @@ pub(super) async fn get_cached(
             .await
         }
         BeforeRequest::Stale { .. } => {
-            let _ = remove_entry(cache, key).await;
+            evict_entry(cache, key).await;
             fetch_and_maybe_store(client, cache, key, wire_request).await
         }
     }
@@ -437,7 +437,7 @@ fn load_entry_blocking(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntr
         Ok(bytes) => bytes,
         Err(Error::Cache(CacheError::Format(error))) => {
             tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
-            let _ = cache.remove(&namespaced);
+            evict_entry_blocking(cache, key);
             return Ok(None);
         }
         Err(error) => return Err(error),
@@ -450,16 +450,29 @@ fn load_entry_blocking(cache: &Cache, key: &str) -> Result<Option<CachedHttpEntr
         Ok(entry) => Ok(Some(entry)),
         Err(error) => {
             tracing::warn!(key, error = %error, "discarding corrupt HTTP cache entry");
-            let _ = cache.remove(&namespaced);
+            evict_entry_blocking(cache, key);
             Ok(None)
         }
     }
 }
 
-async fn remove_entry(cache: &Cache, key: &str) -> Result<()> {
+fn warn_eviction_failure(key: &str, error: &Error) {
+    tracing::warn!(key, error = %error, "failed to evict HTTP cache entry");
+}
+
+fn evict_entry_blocking(cache: &Cache, key: &str) {
+    if let Err(error) = cache.remove(&namespaced_key(key)) {
+        warn_eviction_failure(key, &error);
+    }
+}
+
+async fn evict_entry(cache: &Cache, key: &str) {
     let cache = cache.clone();
-    let namespaced = namespaced_key(key);
-    crate::cache::run_io(move || cache.remove(&namespaced)).await
+    let owned_key = key.to_owned();
+    let result = crate::cache::run_io(move || cache.remove(&namespaced_key(&owned_key))).await;
+    if let Err(error) = result {
+        warn_eviction_failure(key, &error);
+    }
 }
 
 async fn fetch_and_maybe_store(
@@ -481,8 +494,8 @@ async fn fetch_and_maybe_store(
 
     if policy.is_storable() {
         persist_entry(client, cache, key, &policy, &response, response_time).await;
-    } else if let Err(error) = remove_entry(cache, key).await {
-        tracing::warn!(key, error = %error, "failed to remove non-storable HTTP cache entry");
+    } else {
+        evict_entry(cache, key).await;
     }
     Ok(response.with_cache_status(CacheStatus::Miss))
 }
@@ -539,7 +552,7 @@ async fn revalidate(
         }
         AfterResponse::Modified(_, _) => {
             if response.status() == StatusCode::NOT_MODIFIED {
-                let _ = remove_entry(cache, key).await;
+                evict_entry(cache, key).await;
                 return Ok(response.with_cache_status(CacheStatus::Miss));
             }
             let policy = CachePolicy::new_options(
@@ -550,8 +563,8 @@ async fn revalidate(
             );
             if policy.is_storable() {
                 persist_entry(client, cache, key, &policy, &response, response_time).await;
-            } else if let Err(error) = remove_entry(cache, key).await {
-                tracing::warn!(key, error = %error, "failed to remove non-storable HTTP cache entry");
+            } else {
+                evict_entry(cache, key).await;
             }
             Ok(response.with_cache_status(CacheStatus::Miss))
         }
@@ -682,6 +695,10 @@ fn corrupt_cache_error(error: impl std::fmt::Display) -> Error {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "logging")]
+    use std::collections::BTreeMap;
+    #[cfg(feature = "logging")]
+    use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 
     use http_cache_semantics::BeforeRequest;
@@ -691,8 +708,87 @@ mod tests {
         PROXY_AUTHORIZATION, SET_COOKIE,
     };
     use hyper::{Request, StatusCode};
+    #[cfg(feature = "logging")]
+    use tracing::field::{Field, Visit};
+    #[cfg(feature = "logging")]
+    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
+
+    #[cfg(feature = "logging")]
+    #[derive(Clone, Default)]
+    struct WarningCapture(Arc<Mutex<Vec<BTreeMap<String, String>>>>);
+
+    #[cfg(feature = "logging")]
+    impl<S> tracing_subscriber::Layer<S> for WarningCapture
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() != tracing::Level::WARN {
+                return;
+            }
+            let mut visitor = EventVisitor::default();
+            event.record(&mut visitor);
+            self.0.lock().unwrap().push(visitor.fields);
+        }
+    }
+
+    #[cfg(feature = "logging")]
+    #[derive(Default)]
+    struct EventVisitor {
+        fields: BTreeMap<String, String>,
+    }
+
+    #[cfg(feature = "logging")]
+    impl Visit for EventVisitor {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.fields
+                .insert(field.name().to_owned(), value.to_owned());
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.fields
+                .insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn eviction_failure_is_logged_with_key_and_error() {
+        use base64::Engine as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Cache::new(directory.path());
+        let key = "locked";
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(namespaced_key(key));
+        let entry_path = directory.path().join(format!("v2-{encoded}.cache"));
+        std::fs::create_dir(&entry_path).unwrap();
+
+        let capture = WarningCapture::default();
+        let events = capture.0.clone();
+        let subscriber = tracing_subscriber::registry().with(capture);
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        evict_entry_blocking(&cache, key);
+
+        let events = events.lock().unwrap();
+        let warning = events
+            .iter()
+            .find(|fields| {
+                fields
+                    .get("message")
+                    .is_some_and(|message| message.contains("failed to evict HTTP cache entry"))
+            })
+            .expect("eviction failure should emit a warning");
+        assert_eq!(warning.get("key").map(String::as_str), Some(key));
+        assert!(warning.get("error").is_some_and(|error| !error.is_empty()));
+        drop(events);
+    }
 
     #[test]
     fn lossless_headers_round_trip_duplicates_and_opaque_bytes() {
