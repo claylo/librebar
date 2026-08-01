@@ -90,6 +90,17 @@ impl CookieJar {
         }
     }
 
+    pub(super) fn apply_to_request<B>(&self, request: &mut Request<B>) {
+        if request.headers().contains_key(COOKIE) {
+            return;
+        }
+        if let Ok(url) = Url::parse(&request.uri().to_string())
+            && let Some(value) = self.request_header(&url)
+        {
+            request.headers_mut().insert(COOKIE, value);
+        }
+    }
+
     fn store_response(&self, url: &Url, response: &Response<ResponseBody>) {
         let cookies = response
             .headers()
@@ -158,12 +169,7 @@ where
         let mut inner = std::mem::replace(&mut self.inner, replacement);
         let jar = self.jar.clone();
         let url = Url::parse(&request.uri().to_string());
-        if let Ok(url) = &url
-            && !request.headers().contains_key(COOKIE)
-            && let Some(value) = jar.request_header(url)
-        {
-            request.headers_mut().insert(COOKIE, value);
-        }
+        jar.apply_to_request(&mut request);
 
         Box::pin(async move {
             let response = inner.call(request).await?;

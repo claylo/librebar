@@ -9,9 +9,10 @@
 //! - A 16 MiB decoded response limit, configurable through the builder
 //! - Configurable user-agent and whole-operation timeout
 //! - Explicit per-client cookies behind the `http-cookies` feature
+//! - RFC-aware private GET caching behind the `http-cache` feature
 //! - `#[tracing::instrument]` on every request
 //! - GET, POST, PUT, PATCH, DELETE, and arbitrary [`Request`] support
-//! - Simple [`Response`] type with status and body bytes
+//! - [`Response`] metadata with lossless repeated headers and trailers
 //!
 //! # Example
 //!
@@ -28,6 +29,10 @@
 //! # }
 //! ```
 //!
+//! `Response` retains the final status, protocol version, repeated headers,
+//! trailers, and decoded body. Use `headers().get_all(name)` when field order
+//! and multiplicity matter.
+//!
 //! Custom headers use the standard HTTP request builder:
 //!
 //! ```no_run
@@ -42,6 +47,46 @@
 //!     .body(Bytes::from_static(br#"{"name":"gizmo"}"#))?;
 //! let response = client.send(request).await?;
 //! # let _ = response;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Conditional requests preserve opaque ETag and Last-Modified validators:
+//!
+//! ```no_run
+//! use librebar::http::{ConditionalResponse, HttpClient};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = HttpClient::from_app("my-app", "1.0.0")?;
+//! let initial = client.get("https://example.com/data").await?;
+//! if let Some(validator) = initial.validator() {
+//!     let _metadata_only = client.check_modified("https://example.com/data", &validator).await?;
+//!     match client.get_if_modified("https://example.com/data", &validator).await? {
+//!         ConditionalResponse::Modified(response) => println!("{}", response.text_ref()?),
+//!         ConditionalResponse::NotModified(_) => println!("unchanged"),
+//!         ConditionalResponse::Indeterminate(response) => {
+//!             eprintln!("origin returned {}", response.status());
+//!         }
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! With `http-cache`, HTTP policy controls freshness and revalidation while
+//! the caller retains explicit ownership of the filesystem cache and key:
+//!
+//! ```no_run
+//! use librebar::cache::Cache;
+//! use librebar::http::HttpClient;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let cache = Cache::default_for("my-app").ok_or("cache directory unavailable")?;
+//! let client = HttpClient::from_app("my-app", "1.0.0")?;
+//! let response = client
+//!     .get_cached(&cache, "widgets", "https://example.com/widgets")
+//!     .await?;
+//! println!("{:?}: {}", response.cache_status(), response.text_ref()?);
 //! # Ok(())
 //! # }
 //! ```
@@ -64,11 +109,21 @@ mod cookies;
 #[cfg(feature = "http-cookies")]
 pub use cookies::CookieJar;
 
+mod response;
+pub use hyper::header::{HeaderMap, HeaderValue};
+pub use hyper::{Method, Request, StatusCode, Version};
+#[cfg(feature = "http-cache")]
+pub use response::CacheStatus;
+pub use response::{ConditionalResponse, ModificationCheck, Response, ResponseMetadata, Validator};
+
+#[cfg(feature = "http-cache")]
+#[path = "http/cache.rs"]
+mod http_cache;
+
 use crate::Result;
 use crate::error::HttpError;
 
 pub use hyper::body::Bytes;
-pub use hyper::{Method, Request};
 
 // ─── Config ─────────────────────────────────────────────────────────
 
@@ -87,6 +142,9 @@ pub struct HttpClientConfig {
     pub retry_policy: RetryPolicy,
     /// Maximum decoded response body retained in memory. Zero disables the limit.
     pub max_response_size: usize,
+    /// How long stale HTTP entries remain available for revalidation.
+    #[cfg(feature = "http-cache")]
+    pub http_cache_stale_retention: Duration,
 }
 
 impl HttpClientConfig {
@@ -99,6 +157,8 @@ impl HttpClientConfig {
             decompression: true,
             retry_policy: RetryPolicy::new(),
             max_response_size: 16 * 1024 * 1024,
+            #[cfg(feature = "http-cache")]
+            http_cache_stale_retention: Duration::from_secs(7 * 24 * 60 * 60),
         }
     }
 
@@ -217,6 +277,14 @@ impl HttpClientBuilder {
     #[must_use]
     pub const fn max_response_size(mut self, max_response_size: usize) -> Self {
         self.config.max_response_size = max_response_size;
+        self
+    }
+
+    /// Set how long stale HTTP entries remain available for revalidation.
+    #[cfg(feature = "http-cache")]
+    #[must_use]
+    pub const fn http_cache_stale_retention(mut self, retention: Duration) -> Self {
+        self.config.http_cache_stale_retention = retention;
         self
     }
 
@@ -454,6 +522,77 @@ impl HttpClient {
         self.request(Method::GET, url, []).await
     }
 
+    /// Perform an RFC-aware cached GET using an explicit cache and key.
+    ///
+    /// A key identifies one stored representation. Include tenant, locale, or
+    /// media-type distinctions in the key when callers intentionally need
+    /// multiple variants. Cache files can contain complete API responses and
+    /// are therefore written as private data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an HTTP or cache error when the request or cache read fails.
+    #[cfg(feature = "http-cache")]
+    pub async fn get_cached(
+        &self,
+        cache: &crate::cache::Cache,
+        key: &str,
+        url: &str,
+    ) -> Result<Response> {
+        http_cache::get_cached(self, cache, key, url).await
+    }
+
+    /// Perform a conditional GET using an origin-supplied validator.
+    ///
+    /// ETag takes precedence over Last-Modified when both are available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Http`](crate::Error::Http) when the request cannot be
+    /// built or completed.
+    pub async fn get_if_modified(
+        &self,
+        url: &str,
+        validator: &Validator,
+    ) -> Result<ConditionalResponse> {
+        let request = conditional_request(Method::GET, url, validator)?;
+        let response = self.send(request).await?;
+        if response.status() == StatusCode::NOT_MODIFIED {
+            let (metadata, _) = response.into_parts();
+            Ok(ConditionalResponse::NotModified(metadata))
+        } else if response.status().is_success() {
+            Ok(ConditionalResponse::Modified(response))
+        } else {
+            Ok(ConditionalResponse::Indeterminate(response))
+        }
+    }
+
+    /// Check whether a representation changed using a conditional HEAD.
+    ///
+    /// This method never falls back to GET when HEAD is unsupported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Http`](crate::Error::Http) when the request cannot be
+    /// built or completed.
+    pub async fn check_modified(
+        &self,
+        url: &str,
+        validator: &Validator,
+    ) -> Result<ModificationCheck> {
+        let request = conditional_request(Method::HEAD, url, validator)?;
+        let response = self.send(request).await?;
+        let status = response.status();
+        let (metadata, _) = response.into_parts();
+        if status == StatusCode::NOT_MODIFIED {
+            Ok(ModificationCheck::NotModified(metadata))
+        } else if status.is_success() {
+            Ok(ModificationCheck::Modified(metadata))
+        } else {
+            Ok(ModificationCheck::Indeterminate(metadata))
+        }
+    }
+
     /// Perform a POST request with a byte body.
     pub async fn post(&self, url: &str, body: impl AsRef<[u8]>) -> Result<Response> {
         self.request(Method::POST, url, body).await
@@ -502,13 +641,7 @@ impl HttpClient {
         fields(method = %request.method(), url = %request.uri())
     )]
     pub async fn send(&self, mut request: Request<Bytes>) -> Result<Response> {
-        if !request.headers().contains_key(hyper::header::USER_AGENT) {
-            let user_agent = hyper::header::HeaderValue::from_str(&self.config.user_agent)
-                .map_err(HttpError::InvalidHeaderValue)?;
-            request
-                .headers_mut()
-                .insert(hyper::header::USER_AGENT, user_agent);
-        }
+        self.prepare_request(&mut request)?;
 
         let (parts, body) = request.into_parts();
         let request = Request::from_parts(parts, Full::new(body));
@@ -532,12 +665,16 @@ impl HttpClient {
                             continue;
                         }
 
-                        match read_body(response.into_body(), self.config.max_response_size).await {
-                            Ok(body) => {
-                                return Ok(Response {
-                                    status: status.as_u16(),
-                                    body,
-                                });
+                        let (parts, response_body) = response.into_parts();
+                        match read_body(response_body, self.config.max_response_size).await {
+                            Ok((body, trailers)) => {
+                                let metadata = ResponseMetadata::new(
+                                    parts.status,
+                                    parts.version,
+                                    parts.headers,
+                                    trailers,
+                                );
+                                return Ok(Response::new(metadata, body));
                             }
                             Err(ReadBodyError::Body(error))
                                 if retryable_method
@@ -589,6 +726,35 @@ impl HttpClient {
     pub const fn cookie_jar(&self) -> Option<&CookieJar> {
         self.cookie_jar.as_ref()
     }
+
+    pub(super) fn prepare_request(&self, request: &mut Request<Bytes>) -> Result<()> {
+        if !request.headers().contains_key(hyper::header::USER_AGENT) {
+            let user_agent = hyper::header::HeaderValue::from_str(&self.config.user_agent)
+                .map_err(HttpError::InvalidHeaderValue)?;
+            request
+                .headers_mut()
+                .insert(hyper::header::USER_AGENT, user_agent);
+        }
+        #[cfg(feature = "http-cookies")]
+        if let Some(jar) = &self.cookie_jar {
+            jar.apply_to_request(request);
+        }
+        Ok(())
+    }
+}
+
+fn conditional_request(method: Method, url: &str, validator: &Validator) -> Result<Request<Bytes>> {
+    let uri: hyper::Uri = url.parse().map_err(HttpError::InvalidUrl)?;
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(etag) = validator.etag() {
+        builder = builder.header(hyper::header::IF_NONE_MATCH, etag);
+    } else if let Some(last_modified) = validator.last_modified() {
+        builder = builder.header(hyper::header::IF_MODIFIED_SINCE, last_modified);
+    }
+    builder
+        .body(Bytes::new())
+        .map_err(HttpError::RequestBuild)
+        .map_err(Into::into)
 }
 
 fn clone_request(request: &Request<RequestBody>) -> Result<Request<RequestBody>> {
@@ -606,6 +772,12 @@ fn clone_request(request: &Request<RequestBody>) -> Result<Request<RequestBody>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::convert::Infallible;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use hyper::body::{Body, Frame};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct RequestMarker(&'static str);
@@ -622,8 +794,51 @@ mod tests {
             Some(&RequestMarker("preserved"))
         );
     }
+
+    struct FrameBody(VecDeque<std::result::Result<Frame<Bytes>, Infallible>>);
+
+    impl Body for FrameBody {
+        type Data = Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Option<std::result::Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(self.0.pop_front())
+        }
+    }
+
+    #[tokio::test]
+    async fn body_collection_appends_multiple_trailer_frames() {
+        let mut first = HeaderMap::new();
+        first.append("x-trailer", HeaderValue::from_static("one"));
+        let mut second = HeaderMap::new();
+        second.append("x-trailer", HeaderValue::from_static("two"));
+        let body = FrameBody(VecDeque::from([
+            Ok(Frame::data(Bytes::from_static(b"body"))),
+            Ok(Frame::trailers(first)),
+            Ok(Frame::trailers(second)),
+        ]))
+        .map_err(|never| -> BoxError { match never {} })
+        .boxed_unsync();
+
+        let (bytes, trailers) = read_body(body, 1024).await.unwrap();
+
+        assert_eq!(bytes, b"body");
+        assert_eq!(
+            trailers
+                .unwrap()
+                .get_all("x-trailer")
+                .iter()
+                .map(|value| value.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["one", "two"]
+        );
+    }
 }
 
+#[derive(Debug)]
 enum ReadBodyError {
     Body(BoxError),
     TooLarge,
@@ -632,22 +847,42 @@ enum ReadBodyError {
 async fn read_body(
     mut body: ResponseBody,
     maximum: usize,
-) -> std::result::Result<Vec<u8>, ReadBodyError> {
+) -> std::result::Result<(Vec<u8>, Option<HeaderMap>), ReadBodyError> {
     let mut output = Vec::new();
+    let mut trailers: Option<HeaderMap> = None;
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(ReadBodyError::Body)?;
-        let Ok(data) = frame.into_data() else {
-            continue;
-        };
-        let Some(new_size) = output.len().checked_add(data.len()) else {
-            return Err(ReadBodyError::TooLarge);
-        };
-        if maximum > 0 && new_size > maximum {
-            return Err(ReadBodyError::TooLarge);
+        match frame.into_data() {
+            Ok(data) => append_bounded(&mut output, &data, maximum)?,
+            Err(frame) => {
+                if let Ok(next) = frame.into_trailers() {
+                    let stored = trailers.get_or_insert_with(HeaderMap::new);
+                    for (name, value) in next {
+                        if let Some(name) = name {
+                            stored.append(name, value);
+                        }
+                    }
+                }
+            }
         }
-        output.extend_from_slice(&data);
     }
-    Ok(output)
+    Ok((output, trailers))
+}
+
+fn append_bounded(
+    output: &mut Vec<u8>,
+    data: &[u8],
+    maximum: usize,
+) -> std::result::Result<(), ReadBodyError> {
+    let new_size = output
+        .len()
+        .checked_add(data.len())
+        .ok_or(ReadBodyError::TooLarge)?;
+    if maximum > 0 && new_size > maximum {
+        return Err(ReadBodyError::TooLarge);
+    }
+    output.extend_from_slice(data);
+    Ok(())
 }
 
 async fn discard_body(mut body: ResponseBody) {
@@ -677,66 +912,4 @@ fn map_service_error(error: BoxError) -> HttpError {
         };
     }
     HttpError::Request(error)
-}
-
-// ─── Response ───────────────────────────────────────────────────────
-
-/// HTTP response returned by [`HttpClient`].
-#[derive(Debug)]
-pub struct Response {
-    /// HTTP status code.
-    pub status: u16,
-    body: Vec<u8>,
-}
-
-impl Response {
-    /// Attempt to decode the body as UTF-8 text.
-    ///
-    /// This clones the body. Use [`into_text`](Self::into_text) when you
-    /// no longer need the `Response`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`std::string::FromUtf8Error`] if the body is not valid UTF-8.
-    pub fn text(&self) -> std::result::Result<String, std::string::FromUtf8Error> {
-        String::from_utf8(self.body.clone())
-    }
-
-    /// Consume the response and decode the body as UTF-8 text.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`std::string::FromUtf8Error`] if the body is not valid UTF-8.
-    pub fn into_text(self) -> std::result::Result<String, std::string::FromUtf8Error> {
-        String::from_utf8(self.body)
-    }
-
-    /// Borrow the body as a UTF-8 string slice without copying.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`std::str::Utf8Error`] if the body is not valid UTF-8.
-    pub fn text_ref(&self) -> std::result::Result<&str, std::str::Utf8Error> {
-        std::str::from_utf8(&self.body)
-    }
-
-    /// Deserialize the response body as JSON.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Http`] if the body is not valid JSON or cannot
-    /// be deserialized into `T`.
-    pub fn json<T: serde::de::DeserializeOwned>(&self) -> crate::Result<T> {
-        serde_json::from_slice(&self.body).map_err(|e| HttpError::Json(e).into())
-    }
-
-    /// Return the raw response body bytes.
-    pub fn bytes(&self) -> &[u8] {
-        &self.body
-    }
-
-    /// Returns `true` for 2xx status codes.
-    pub const fn is_success(&self) -> bool {
-        self.status >= 200 && self.status < 300
-    }
 }
