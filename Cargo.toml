@@ -85,6 +85,7 @@ url = { version = "2.5", optional = true }
 # added to its default feature set. `std` re-enables `alloc`; the cache module
 # only needs STANDARD encode/decode, which the safe implementation provides.
 base64 = { version = "0.23", default-features = false, features = ["std"], optional = true }
+tempfile = { version = "3.27", optional = true }
 
 # Feature: dispatch
 which = { version = "8.0", optional = true }
@@ -160,7 +161,7 @@ lockfile = []
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-rustls", "dep:rustls", "dep:tokio", "dep:serde_json", "dep:tower", "dep:tower-http"]
 http-cookies = ["http", "dep:cookie_store", "dep:atomic-write-file", "dep:url"]
 http-cache = ["http", "cache", "dep:http-cache-semantics", "dep:sha2"]
-cache = ["dep:serde_json", "dep:directories", "dep:base64", "dep:atomic-write-file"]
+cache = ["dep:serde_json", "dep:directories", "dep:base64", "dep:tempfile"]
 update = ["http", "cache", "dep:serde_json"]
 dispatch = ["cli", "dep:which"]
 diagnostics = ["config", "logging", "dep:flate2", "dep:leakguard", "dep:tar"]

@@ -67,8 +67,6 @@ impl CookieJar {
                 .flush()
                 .map_err(|source| cookie_error("save", path, source))?;
         }
-        file.sync_all()
-            .map_err(|source| cookie_error("save", path, source))?;
         file.commit()
             .map_err(|source| cookie_error("save", path, source))?;
         Ok(())

@@ -31,7 +31,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use atomic_write_file::AtomicWriteFile;
 use base64::Engine;
 
 use crate::error::{CacheError, Result};
@@ -317,19 +316,24 @@ fn is_v2_cache_path(path: &Path) -> bool {
 }
 
 fn write_entry(path: &Path, header: &[u8], parts: &[&[u8]]) -> std::io::Result<()> {
-    let mut options = AtomicWriteFile::options();
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".librebar-cache-");
     #[cfg(unix)]
     {
-        use atomic_write_file::unix::OpenOptionsExt as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600).preserve_mode(false);
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(std::fs::Permissions::from_mode(0o600));
     }
-    let mut file = options.open(path)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut file = builder.tempfile_in(parent)?;
     file.write_all(header)?;
     for part in parts {
         file.write_all(part)?;
     }
-    file.commit()
+    file.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 /// Get the default cache directory for an application.
