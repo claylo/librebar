@@ -702,7 +702,6 @@ impl ConfigLoader {
             // Check boundary after checking config (so same-dir config is found)
             if let Some(ref marker) = self.boundary_marker
                 && dir.join(marker).exists()
-                && dir != start
             {
                 break;
             }

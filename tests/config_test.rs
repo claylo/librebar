@@ -644,6 +644,28 @@ fn loader_boundary_marker_stops_search() {
 }
 
 #[test]
+fn loader_boundary_marker_stops_at_search_root() {
+    let tmp = TempDir::new().unwrap();
+    let parent = tmp.path().join("parent");
+    let project = parent.join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+
+    fs::write(parent.join(".test-app.toml"), r#"log_level = "warn""#).unwrap();
+
+    let project = camino::Utf8PathBuf::try_from(project).unwrap();
+
+    let (config, sources): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
+        .with_user_config(false)
+        .without_environment()
+        .with_project_search(&project)
+        .load()
+        .unwrap();
+
+    assert_eq!(config.log_level, librebar::config::LogLevel::Info);
+    assert!(sources.project_file.is_none());
+}
+
+#[test]
 fn loader_load_or_error_fails_when_no_config() {
     let result = librebar::config::ConfigLoader::new("test-app")
         .with_user_config(false)
