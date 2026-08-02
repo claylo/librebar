@@ -21,6 +21,7 @@ exclude = [
     "/scripts/",
     "/docs/",
     "/scratch/",
+    "/record/",
 ]
 
 [package.metadata.docs.rs]

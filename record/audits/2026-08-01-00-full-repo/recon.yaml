@@ -1,0 +1,512 @@
+meta:
+  project: librebar
+  commit: 8fd83b359f9ae1da605a77f0e3a5fb38eb4611a7
+  timestamp: 2026-08-01T00:17:36-04:00
+  scope: full working tree at 8fd83b3
+structure:
+  root: /Users/clay/source/claylo/librebar
+  total_files: 123
+  total_lines: 28910
+  languages:
+    - language: HTML
+      files: 4
+      lines: 5390
+      percentage: 18.64
+    - language: Markdown
+      files: 25
+      lines: 8379
+      percentage: 28.98
+    - language: Rust
+      files: 52
+      lines: 10801
+      percentage: 37.36
+    - language: SVG
+      files: 25
+      lines: 350
+      percentage: 1.21
+    - language: Plain Text
+      files: 1
+      lines: 13
+      percentage: 0.04
+    - language: TOML
+      files: 8
+      lines: 273
+      percentage: 0.94
+    - language: YAML
+      files: 8
+      lines: 3704
+      percentage: 12.81
+  modules:
+    - name: librebar (src)
+      path: /Users/clay/source/claylo/librebar/src
+      files: 24
+      lines: 7195
+    - name: integration tests
+      path: /Users/clay/source/claylo/librebar/tests
+      files: 19
+      lines: 4101
+    - name: examples
+      path: /Users/clay/source/claylo/librebar/examples
+      files: 9
+      lines: 1421
+dependencies:
+  manifest: /Users/clay/source/claylo/librebar/Cargo.toml
+  items:
+    - name: atomic-write-file
+      version: ^0.3
+      kind: optional
+    - name: base64
+      version: ^0.23
+      kind: optional
+    - name: camino
+      version: ^1.2
+      kind: optional
+    - name: clap
+      version: ^4.6
+      kind: optional
+    - name: clap_complete
+      version: ^4.6
+      kind: optional
+    - name: clap_mangen
+      version: ^0.3
+      kind: optional
+    - name: cookie_store
+      version: ^0.22
+      kind: optional
+    - name: directories
+      version: ^6.0
+      kind: optional
+    - name: divan
+      version: ^0.1
+      kind: optional
+    - name: flate2
+      version: ^1.1
+      kind: optional
+    - name: gungraun
+      version: ^0.19
+      kind: optional
+    - name: http-body-util
+      version: ^0.1
+      kind: optional
+    - name: http-cache-semantics
+      version: ^3.0
+      kind: optional
+    - name: hyper
+      version: ^1.9
+      kind: optional
+    - name: hyper-rustls
+      version: ^0.27
+      kind: optional
+    - name: hyper-util
+      version: ^0.1
+      kind: optional
+    - name: opentelemetry
+      version: ^0.32
+      kind: optional
+    - name: opentelemetry-otlp
+      version: ^0.32
+      kind: optional
+    - name: opentelemetry_sdk
+      version: ^0.32
+      kind: optional
+    - name: owo-colors
+      version: ^4.3
+      kind: optional
+    - name: rmcp
+      version: ^2.2
+      kind: optional
+    - name: rustls
+      version: ^0.23.40
+      kind: optional
+    - name: serde
+      version: ^1.0
+      kind: direct
+    - name: serde-saphyr
+      version: ^0.0.29
+      kind: optional
+    - name: serde_json
+      version: ^1.0
+      kind: optional
+    - name: sha2
+      version: ^0.10
+      kind: optional
+    - name: tar
+      version: ^0.4
+      kind: optional
+    - name: thiserror
+      version: ^2.0
+      kind: direct
+    - name: tokio
+      version: ^1.52
+      kind: optional
+    - name: toml
+      version: ^1.1
+      kind: optional
+    - name: tower
+      version: ^0.5
+      kind: optional
+    - name: tower-http
+      version: ^0.7
+      kind: optional
+    - name: tracing
+      version: ^0.1
+      kind: direct
+    - name: tracing-appender
+      version: ^0.2.5
+      kind: optional
+    - name: tracing-opentelemetry
+      version: ^0.33
+      kind: optional
+    - name: tracing-subscriber
+      version: ^0.3
+      kind: optional
+    - name: url
+      version: ^2.5
+      kind: optional
+    - name: which
+      version: ^8.0
+      kind: optional
+    - name: anyhow
+      version: ^1.0
+      kind: dev
+    - name: brotli
+      version: ^8.0
+      kind: dev
+    - name: flate2
+      version: ^1.1
+      kind: dev
+    - name: serde_json
+      version: ^1.0
+      kind: dev
+    - name: tempfile
+      version: ^3.27
+      kind: dev
+    - name: tokio
+      version: ^1.52
+      kind: dev
+boundaries:
+  - name: network_ingress
+    description: >-
+      Bytes arriving from remote hosts over the hyper/rustls client stack, then
+      decompressed, parsed, cached, and handed to the caller. Everything past the
+      TLS terminator is attacker-influenced if the remote is hostile or MITM'd.
+    modules:
+      - src/http.rs
+      - src/http/response.rs
+      - src/http/cache.rs
+      - src/http/cookies.rs
+      - src/update.rs
+    notes: >-
+      Gated behind the `http` family of features, none of which are in `default`.
+      Reachable in the default build only if a downstream crate opts in.
+  - name: local_filesystem_state
+    description: >-
+      Config discovery, on-disk cache, cookie jar, and lockfile. These are read at
+      startup and written during operation; several hold credential-adjacent data.
+    modules:
+      - src/config.rs
+      - src/config/environment.rs
+      - src/cache.rs
+      - src/lockfile.rs
+      - src/http/cookies.rs
+    notes: >-
+      `config` and `cache` are DEFAULT features, so this boundary is live in every
+      stock build.
+  - name: subprocess_execution
+    description: >-
+      Git-style plugin dispatch: resolve a `<prog>-<subcommand>` binary on PATH and
+      exec it, inheriting the parent environment.
+    modules:
+      - src/dispatch.rs
+    notes: PATH resolution via the `which` crate. Gated behind `dispatch` (not default).
+  - name: diagnostic_export
+    description: >-
+      The doctor bundle sweeps local config, logs, and environment into a tar.gz that
+      users are expected to attach to public bug reports. Data flows outward.
+    modules:
+      - src/diagnostics.rs
+    notes: >-
+      `diagnostics` IS a default feature. Outbound-disclosure boundary, not an
+      inbound-attack one.
+  - name: process_lifecycle
+    description: >-
+      Panic hook installation, signal handling, and the flush-on-exit ordering
+      contract between the logging writer, the OTLP exporter, and shutdown.
+    modules:
+      - src/crash.rs
+      - src/shutdown.rs
+      - src/logging.rs
+      - src/otel.rs
+    notes: >-
+      `crash` and `logging` are default features; the panic hook is installed in
+      every stock build and runs on arbitrary threads.
+
+churn:
+  period: last 12 months
+  hotspots:
+    - path: Cargo.toml
+      commits: 25
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 20
+        - 2
+        - 0
+        - 3
+    - path: src/lib.rs
+      commits: 19
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 18
+        - 0
+        - 0
+        - 1
+    - path: Cargo.lock
+      commits: 18
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 13
+        - 2
+        - 0
+        - 3
+    - path: README.md
+      commits: 12
+      authors: 1
+      last_touched: 2026-07-31
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 9
+        - 1
+        - 0
+        - 2
+    - path: src/logging.rs
+      commits: 9
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 9
+        - 0
+        - 0
+        - 0
+    - path: src/shutdown.rs
+      commits: 8
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 8
+        - 0
+        - 0
+        - 0
+    - path: src/error.rs
+      commits: 8
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 8
+        - 0
+        - 0
+        - 0
+    - path: src/cli.rs
+      commits: 7
+      authors: 1
+      last_touched: 2026-07-31
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 4
+        - 0
+        - 0
+        - 3
+    - path: tests/config_test.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 5
+        - 0
+        - 0
+        - 1
+    - path: tests/cli_test.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-07-31
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 3
+        - 0
+        - 0
+        - 3
+    - path: src/update.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: src/http.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: src/diagnostics.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: src/config.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-09
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: examples/README.md
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+  recent_activity:
+    total_commits: 14
+    active_authors: 1
+    files_changed: 55
+testing:
+  runner: just
+  command: just test
+  sources:
+    - .config/scrat.toml
+  notes: "`.config/nextest.toml` is present — the wrapper command likely invokes `cargo nextest run`.
+    Do not invoke `cargo test` directly: env-mutating tests assume nextest process isolation."

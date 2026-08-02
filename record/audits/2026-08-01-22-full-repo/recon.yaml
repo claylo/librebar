@@ -1,0 +1,560 @@
+meta:
+  project: librebar
+  commit: 3e4b96e7f4b81cfcc5ecd054b1b0340643afea8a
+  timestamp: 2026-08-01T22:19:53-04:00
+  scope: "Full tracked repository at 3e4b96e: library source, tests, examples, dependency manifests, CI/tool configuration, and documentation; excludes generated audit artifacts and build output"
+structure:
+  root: /Users/clay/source/claylo/librebar
+  total_files: 178
+  total_lines: 37784
+  languages:
+    - language: HTML
+      files: 4
+      lines: 5390
+      percentage: 14.27
+    - language: Markdown
+      files: 59
+      lines: 11716
+      percentage: 31.01
+    - language: Rust
+      files: 56
+      lines: 15416
+      percentage: 40.80
+    - language: SVG
+      files: 25
+      lines: 350
+      percentage: 0.93
+    - language: Plain Text
+      files: 1
+      lines: 13
+      percentage: 0.03
+    - language: TOML
+      files: 13
+      lines: 418
+      percentage: 1.11
+    - language: YAML
+      files: 20
+      lines: 4481
+      percentage: 11.86
+  modules:
+    - name: crate-root
+      path: src/lib.rs
+      files: 1
+      lines: 766
+    - name: cli
+      path: src/cli.rs
+      files: 4
+      lines: 1445
+    - name: config
+      path: src/config.rs
+      files: 2
+      lines: 1086
+    - name: http
+      path: src/http.rs
+      files: 4
+      lines: 3035
+    - name: otel
+      path: src/otel.rs
+      files: 3
+      lines: 487
+    - name: logging
+      path: src/logging.rs
+      files: 1
+      lines: 609
+    - name: crash
+      path: src/crash.rs
+      files: 1
+      lines: 310
+    - name: cache
+      path: src/cache.rs
+      files: 1
+      lines: 386
+    - name: diagnostics
+      path: src/diagnostics.rs
+      files: 1
+      lines: 607
+    - name: update
+      path: src/update.rs
+      files: 1
+      lines: 415
+    - name: shutdown
+      path: src/shutdown.rs
+      files: 1
+      lines: 260
+    - name: mcp
+      path: src/mcp.rs
+      files: 1
+      lines: 40
+    - name: lockfile
+      path: src/lockfile.rs
+      files: 1
+      lines: 226
+    - name: dispatch
+      path: src/dispatch.rs
+      files: 1
+      lines: 88
+    - name: support
+      path: src/error.rs
+      files: 3
+      lines: 372
+    - name: integration-tests
+      path: tests/
+      files: 20
+      lines: 5929
+    - name: examples
+      path: examples/
+      files: 9
+      lines: 1423
+dependencies:
+  manifest: Cargo.toml
+  items:
+    - name: async-trait
+      version: ^0.1
+      kind: optional
+    - name: atomic-write-file
+      version: ^0.3
+      kind: optional
+    - name: base64
+      version: ^0.23
+      kind: optional
+    - name: bytes
+      version: ^1.12
+      kind: optional
+    - name: camino
+      version: ^1.2
+      kind: optional
+    - name: clap
+      version: ^4.6
+      kind: optional
+    - name: clap_complete
+      version: ^4.6
+      kind: optional
+    - name: clap_mangen
+      version: ^0.3
+      kind: optional
+    - name: cookie_store
+      version: ^0.22
+      kind: optional
+    - name: directories
+      version: ^6.0
+      kind: optional
+    - name: divan
+      version: ^0.1
+      kind: optional
+    - name: flate2
+      version: ^1.1
+      kind: optional
+    - name: gungraun
+      version: ^0.19
+      kind: optional
+    - name: http
+      version: ^1.4
+      kind: optional
+    - name: http-body-util
+      version: ^0.1
+      kind: optional
+    - name: http-cache-semantics
+      version: ^3.0
+      kind: optional
+    - name: hyper
+      version: ^1.9
+      kind: optional
+    - name: hyper-rustls
+      version: ^0.27
+      kind: optional
+    - name: hyper-util
+      version: ^0.1
+      kind: optional
+    - name: leakguard
+      version: ^0.8
+      kind: optional
+    - name: opentelemetry
+      version: ^0.32
+      kind: optional
+    - name: opentelemetry-http
+      version: ^0.32
+      kind: optional
+    - name: opentelemetry-otlp
+      version: ^0.32
+      kind: optional
+    - name: opentelemetry_sdk
+      version: ^0.32
+      kind: optional
+    - name: owo-colors
+      version: ^4.3
+      kind: optional
+    - name: publicsuffix
+      version: ^2.3
+      kind: optional
+    - name: rmcp
+      version: ^3.1
+      kind: optional
+    - name: rustls
+      version: ^0.23.40
+      kind: optional
+    - name: semver
+      version: ^1.0
+      kind: optional
+    - name: serde
+      version: ^1.0
+      kind: direct
+    - name: serde-saphyr
+      version: ^1.0
+      kind: optional
+    - name: serde_json
+      version: ^1.0
+      kind: optional
+    - name: serde_path_to_error
+      version: ^0.1.20
+      kind: optional
+    - name: sha2
+      version: ^0.11
+      kind: optional
+    - name: tar
+      version: ^0.4
+      kind: optional
+    - name: tempfile
+      version: ^3.27
+      kind: optional
+    - name: thiserror
+      version: ^2.0
+      kind: direct
+    - name: tokio
+      version: ^1.52
+      kind: optional
+    - name: toml
+      version: ^1.1
+      kind: optional
+    - name: tower
+      version: ^0.5
+      kind: optional
+    - name: tower-http
+      version: ^0.7
+      kind: optional
+    - name: tracing
+      version: ^0.1
+      kind: direct
+    - name: tracing-appender
+      version: ^0.2.5
+      kind: optional
+    - name: tracing-opentelemetry
+      version: ^0.33
+      kind: optional
+    - name: tracing-subscriber
+      version: ^0.3
+      kind: optional
+    - name: url
+      version: ^2.5
+      kind: optional
+    - name: which
+      version: ^8.0
+      kind: optional
+    - name: anyhow
+      version: ^1.0
+      kind: dev
+    - name: brotli
+      version: ^8.0
+      kind: dev
+    - name: flate2
+      version: ^1.1
+      kind: dev
+    - name: serde_json
+      version: ^1.0
+      kind: dev
+    - name: tempfile
+      version: ^3.27
+      kind: dev
+    - name: tokio
+      version: ^1.52
+      kind: dev
+churn:
+  period: last 12 months
+  hotspots:
+    - path: Cargo.toml
+      commits: 25
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 20
+        - 2
+        - 0
+        - 3
+    - path: src/lib.rs
+      commits: 19
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 18
+        - 0
+        - 0
+        - 1
+    - path: Cargo.lock
+      commits: 18
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 13
+        - 2
+        - 0
+        - 3
+    - path: README.md
+      commits: 12
+      authors: 1
+      last_touched: 2026-07-31
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 9
+        - 1
+        - 0
+        - 2
+    - path: src/logging.rs
+      commits: 9
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 9
+        - 0
+        - 0
+        - 0
+    - path: src/shutdown.rs
+      commits: 8
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 8
+        - 0
+        - 0
+        - 0
+    - path: src/error.rs
+      commits: 8
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 8
+        - 0
+        - 0
+        - 0
+    - path: src/cli.rs
+      commits: 7
+      authors: 1
+      last_touched: 2026-07-31
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 4
+        - 0
+        - 0
+        - 3
+    - path: tests/config_test.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-07-26
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 5
+        - 0
+        - 0
+        - 1
+    - path: tests/cli_test.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-07-31
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 3
+        - 0
+        - 0
+        - 3
+    - path: src/update.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: src/http.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: src/diagnostics.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: src/config.rs
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-09
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+    - path: examples/README.md
+      commits: 6
+      authors: 1
+      last_touched: 2026-04-17
+      monthly_commits:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 6
+        - 0
+        - 0
+        - 0
+  recent_activity:
+    total_commits: 72
+    active_authors: 1
+    files_changed: 97
+testing:
+  runner: just
+  command: just test
+  sources:
+    - .justfile
+    - .config/nextest.toml
+  notes: "`.config/nextest.toml` is present — the wrapper command likely invokes `cargo nextest run`.
+    Do not invoke `cargo test` directly: env-mutating tests assume nextest process isolation."
+boundaries:
+  - name: external_configuration
+    description: "Layered files, environment variables, and programmatic overrides become typed application configuration"
+    modules: [config, crate-root]
+    notes: "Untrusted text crosses Serde and path-discovery boundaries before consumers receive typed values."
+  - name: filesystem_persistence
+    description: "Cache entries, logs, crash dumps, lockfiles, cookie jars, and diagnostic archives are created or replaced on local filesystems"
+    modules: [cache, logging, crash, diagnostics, lockfile, http]
+    notes: "Atomicity, permissions, symlink handling, archive paths, and durability are the primary properties."
+  - name: network_and_credentials
+    description: "HTTP, update checks, cookies, cached representations, and telemetry cross network trust boundaries"
+    modules: [http, update, otel]
+    notes: "Redirect policy, decompression limits, credential persistence, cookie scope, TLS, and cache semantics are security-sensitive."
+  - name: cli_and_process_dispatch
+    description: "Caller-controlled CLI trees and Git-style plugin names become schemas, generated artifacts, paths, and child-process execution"
+    modules: [cli, dispatch]
+    notes: "Argument conflicts, path lookup, generated output, and executable selection form the public command boundary."
+  - name: asynchronous_lifecycle
+    description: "Tokio-backed HTTP, shutdown, MCP, and telemetry code coordinate tasks, signals, transports, and blocking adapters"
+    modules: [http, shutdown, mcp, otel, update]
+    notes: "Cancellation, blocking work, shared state, and runtime ownership are the primary concurrency concerns."

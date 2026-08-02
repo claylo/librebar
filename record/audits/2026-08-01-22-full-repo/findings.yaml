@@ -1,0 +1,962 @@
+---
+audit_date: 2026-08-01
+scope: "Full tracked repository: source, tests, examples, dependencies, configuration, CI/tooling, and documented public contracts"
+commit: 3e4b96e7f4b81cfcc5ecd054b1b0340643afea8a
+assessment: |
+  Librebar has a disciplined Rust baseline: Clippy, RustSec, cargo-deny, and
+  unused-dependency checks are clean, and the first-party unsafe surface produced
+  no soundness finding. The material risk is contract drift rather than memory
+  safety: the builder does not apply the config-backed logging settings promised
+  by the README, and the documented exact log path is date-suffixed. Concurrency
+  ownership around signal registration and cache pruning needs tightening, while
+  several public error boundaries erase operational causes. The remaining type,
+  cookie-path, and dependency findings are contained improvements rather than
+  architectural defects.
+narratives:
+  - slug: documented-logging-contract
+    title: "The Documented Logging Contract Surface"
+    thesis: "The initialization order exists, but two documented logging contracts diverge from the implementation in ways operators can observe immediately."
+    verdict: "This is the audit's sharpest surface because both findings contradict explicit README promises rather than inferred preferences. Repair the config-to-logging handoff and exact-path mode before expanding the builder API."
+    flow:
+      - id: load-config
+        label: "Load typed config"
+        type: start
+      - id: builder-start
+        label: "ConfiguredBuilder::start"
+        type: process
+      - id: apply-settings
+        label: "Apply log settings?"
+        type: decision
+        no: init-defaults
+        findings:
+          - slug: builder-ignores-configured-log-settings
+            label: "Settings ignored"
+      - id: resolve-target
+        label: "Resolve log target"
+        type: process
+      - id: exact-path
+        label: "Exact path?"
+        type: decision
+        no: daily-file
+        findings:
+          - slug: log-path-override-is-not-exact
+            label: "Path gets suffix"
+      - id: logging-ready
+        label: "Logging ready"
+        type: end
+      - id: init-defaults
+        label: "Use info + defaults"
+        type: process
+        spine: false
+        next: resolve-target
+      - id: daily-file
+        label: "Daily rotated file"
+        type: process
+        spine: false
+        next: logging-ready
+    findings:
+      - slug: builder-ignores-configured-log-settings
+        title: "The builder promises config-driven logging but ignores both log_level and log_dir"
+        criterion: FC-1
+        surface: Completeness
+        concern: significant
+        locations:
+          - path: README.md
+            start_line: 583
+            end_line: 589
+          - path: src/lib.rs
+            start_line: 693
+            end_line: 735
+          - path: src/lib.rs
+            start_line: 358
+            end_line: 380
+          - path: examples/minimal.rs
+            start_line: 31
+            end_line: 35
+        evidence: |
+          ## Builder API
+
+          The builder wires everything in the correct initialization order:
+
+          1. Load config (if requested)
+          2. Initialize logging (reads log settings from config if available)
+          3. Return `App<C>` with everything wired up
+        evidence_lang: markdown
+        evidence_markers:
+          - lines: "6"
+            type: del
+            label: "Promised config-to-logging integration is absent"
+        mechanism: |
+          `ConfiguredBuilder::start` loads the typed config into a local value, then
+          calls `inner.init_subsystems()` without passing or inspecting that config.
+          Logging is consequently built only from `BuilderInner::log_dir`, which stays
+          unset unless `with_log_dir` was called explicitly, and `env_filter` receives
+          the literal `info` default. The runnable examples reinforce the contract by
+          describing `Config.log_level` as the baseline used when `-q`/`-v` is absent,
+          although no builder path reads it.
+        remediation: |
+          Derive logging settings from the loaded config before subsystem initialization:
+          populate the baseline filter from top-level `log_level` and the configured
+          directory from top-level `log_dir`, while preserving CLI, environment, and
+          explicit builder precedence. Add builder integration coverage for both fields.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 29
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 9, 1, 0, 6, 13]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [log-path-override-is-not-exact]
+        effort: medium
+        effort_notes: "The generic config value needs a documented mapping and precedence coverage across file, environment, CLI, and programmatic layers."
+
+      - slug: log-path-override-is-not-exact
+        title: "LOG_PATH is documented as an exact path but always receives a date suffix"
+        criterion: FC-1
+        surface: Completeness
+        concern: significant
+        locations:
+          - path: README.md
+            start_line: 543
+            end_line: 549
+          - path: src/logging.rs
+            start_line: 273
+            end_line: 284
+          - path: src/logging.rs
+            start_line: 369
+            end_line: 376
+        evidence: |
+          ### Log directory resolution
+
+          The logging system finds a writable log directory using this priority:
+
+          1. `{APP}_LOG_PATH` env var (exact file path)
+          2. `{APP}_LOG_DIR` env var (directory, appends `{app}.jsonl`)
+          3. `log_dir` from config
+        evidence_lang: markdown
+        evidence_markers:
+          - lines: "5"
+            type: del
+            label: "The documented exact path is not opened exactly"
+        mechanism: |
+          `build_log_writer` resolves `{APP}_LOG_PATH` into a `LogTarget`, but then
+          passes every target through `PrivateDailyAppender`. `open_daily_log_file`
+          constructs the actual path as `{file_name_prefix}.{date}`, so an override
+          such as `/tmp/myapp.jsonl` writes `/tmp/myapp.jsonl.2026-08-01`. A log
+          shipper or supervisor watching the documented path sees no file.
+        remediation: |
+          Preserve an explicit target mode in `LogTarget`. Open `{APP}_LOG_PATH`
+          exactly with a private non-rotating append writer; retain daily rotation for
+          directory-based and platform-default targets. Cover the exact-path behavior
+          with an integration test.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 17
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 1, 7]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [builder-ignores-configured-log-settings]
+        effort: small
+        effort_notes: "Add one target-mode distinction, one exact-file writer branch, and focused logging coverage."
+
+  - slug: signal-lifecycle
+    title: "The Signal Lifecycle Surface"
+    thesis: "Permanent process-wide signal handling is intentional, but repeated registration creates independent loops whose escalation state can disagree."
+    verdict: "The first graceful-shutdown path is sound and intentionally process-wide. The defect is duplicate registration: process-global signal ownership needs one process-global dispatcher and one escalation state."
+    flow:
+      - id: register
+        label: "Register signals"
+        type: start
+      - id: spawn
+        label: "Spawn detached loop"
+        type: process
+        findings:
+          - slug: detached-signal-task-outlives-app-lifecycle
+            label: "Detached state"
+      - id: app-drop
+        label: "Register again?"
+        type: decision
+        no: await-signal
+      - id: stale-task
+        label: "Old task remains active"
+        type: process
+      - id: reregister
+        label: "Register new App"
+        type: process
+      - id: await-signal
+        label: "Receive signal"
+        type: process
+      - id: exit
+        label: "Shutdown or force exit"
+        type: end
+    findings:
+      - slug: detached-signal-task-outlives-app-lifecycle
+        title: "Duplicate signal registrations retain stale forced-exit state"
+        criterion: "6.2"
+        surface: Concurrency
+        concern: moderate
+        locations:
+          - path: src/shutdown.rs
+            start_line: 142
+            end_line: 175
+        evidence: |2
+                  let handle = self.clone();
+
+                  tracing::debug!("registering shutdown signal handlers");
+                  runtime.spawn(async move {
+                      loop {
+                          #[cfg(unix)]
+                          let signal = tokio::select! {
+                              received = sigint.recv() => received.map(|()| ShutdownSignal::Interrupt),
+                              received = sigterm.recv() => received.map(|()| ShutdownSignal::Terminate),
+                          };
+
+                          #[cfg(not(unix))]
+                          let signal = ctrl_c_signal(tokio::signal::ctrl_c().await);
+
+                          let Some(signal) = signal else {
+                              tracing::error!("shutdown signal stream closed; signal task exiting");
+                              return;
+                          };
+
+                          match action_for_signal(&handle, signal) {
+                              SignalAction::Shutdown => {
+                                  tracing::info!(signal = signal.name(), "shutdown signal received");
+                              }
+                              SignalAction::Exit(exit_code) => {
+                                  tracing::warn!(
+                                      signal = signal.name(),
+                                      exit_code,
+                                      "repeated shutdown signal received; forcing exit"
+                                  );
+                                  std::process::exit(exit_code);
+                              }
+                          }
+                      }
+                  });
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-5"
+            type: del
+            label: "The task owns a clone, loops forever, and discards its JoinHandle"
+          - lines: "20-30"
+            type: mark
+            label: "Escalation state remains attached to the orphaned handle"
+        mechanism: |
+          Signal handling is intentionally permanent and process-wide, but each call to
+          `register_signals` spawns another independent loop with its own cloned handle
+          and escalation state. Tokio delivers notifications to every registered stream.
+          If an earlier registration has entered shutdown state, a later registration's
+          first signal is also observed by the stale loop and can call `process::exit`,
+          bypassing the later handle's graceful-shutdown opportunity.
+        remediation: |
+          Preserve permanent process-wide handling, but use one process-global dispatcher
+          and one escalation state. Reject duplicate registration or atomically update
+          the active `ShutdownHandle` rather than spawning another independent loop.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 6
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 2]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: medium
+        effort_notes: "Centralizing process-wide signal ownership requires explicit duplicate-registration and handle-replacement semantics."
+
+  - slug: cache-concurrency
+    title: "The Cache Concurrency Surface"
+    thesis: "Atomic replacement protects individual writes, but pruning can act on a pathname after its inspected inode has been replaced."
+    verdict: "The race causes cache loss rather than data corruption or credential exposure. It is a real cross-task/process TOCTOU edge, but its impact is bounded to a miss and redundant refill."
+    flow:
+      - id: inspect
+        label: "Read cached expiry"
+        type: start
+      - id: expired
+        label: "Expired?"
+        type: decision
+        no: keep
+      - id: concurrent-write
+        label: "Writer renames fresh entry"
+        type: process
+      - id: unlink
+        label: "Pruner removes path"
+        type: process
+        findings:
+          - slug: cache-prune-can-delete-concurrent-fresh-write
+            label: "Fresh entry lost"
+      - id: miss
+        label: "Next read misses"
+        type: end
+      - id: keep
+        label: "Keep entry"
+        type: end
+        spine: false
+    findings:
+      - slug: cache-prune-can-delete-concurrent-fresh-write
+        title: "Cache pruning can unlink a fresh entry installed by a concurrent writer"
+        criterion: "6.2"
+        surface: Concurrency
+        concern: moderate
+        locations:
+          - path: src/cache.rs
+            start_line: 188
+            end_line: 204
+        evidence: |2
+                      let path = entry.path();
+                      if !is_v2_cache_path(&path) {
+                          continue;
+                      }
+                      let expires_at = match read_expiry_at(&path) {
+                          Ok(expires_at) => expires_at,
+                          Err(error) => {
+                              tracing::warn!(error = %error, "failed to inspect cache entry while pruning");
+                              continue;
+                          }
+                      };
+                      if now < expires_at {
+                          continue;
+                      }
+
+                      match std::fs::remove_file(&path) {
+                          Ok(()) => removed += 1,
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "5"
+            type: mark
+            label: "Expiry belongs to the entry currently named by the path"
+          - lines: "16-17"
+            type: del
+            label: "The pathname is removed later without identity revalidation"
+        mechanism: |
+          A pruner can inspect an expired entry, then a concurrent `Cache::set` can
+          atomically rename a fresh entry onto the same path before `remove_file`.
+          The pruner unlinks the fresh replacement rather than the expired inode it
+          inspected. Clone-local prune suppression does not serialize against writes,
+          independent Cache instances, explicit prune calls, or other processes.
+        remediation: |
+          Serialize expiry inspection/removal with final cache-file replacement using
+          a per-cache advisory lock shared by `set`, explicit `prune`, and automatic
+          pruning. Structure lock ownership to avoid recursive acquisition.
+        temporal:
+          introduced: 2026-08-01
+          last_modified: 2026-08-01
+          commit_count: 1
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        chains:
+          enables: []
+          enabled_by: []
+          related: []
+        effort: medium
+        effort_notes: "The critical section is small, but it must cover explicit and automatic pruning plus replacement writes across processes."
+
+  - slug: error-boundaries
+    title: "The Error Boundary Surface"
+    thesis: "Librebar's crate-level errors are generally typed, but several public subsystem boundaries collapse distinct failures into Option, String, or unconditional success."
+    verdict: "No panic or process-killing error path was confirmed. The recurring weakness is observability at filesystem and resolver boundaries: callers can detect that something failed, but often cannot determine what failed or whether an operation completed partially."
+    flow:
+      - id: external-op
+        label: "External operation"
+        type: start
+      - id: operation-result
+        label: "Fallible result"
+        type: process
+      - id: preserve
+        label: "Preserve cause?"
+        type: decision
+        no: erase
+      - id: typed-error
+        label: "Typed error + source"
+        type: end
+      - id: erase
+        label: "Option/String/Ok"
+        type: process
+        spine: false
+        findings:
+          - slug: dispatch-resolution-errors-collapse-to-not-found
+            label: "Not-found collapse"
+          - slug: crash-dump-errors-erased
+            label: "Dump cause lost"
+          - slug: cache-clear-reports-partial-success
+            label: "Partial success"
+          - slug: logging-resolution-uses-string-errors
+            label: "String error"
+        next: opaque-result
+      - id: opaque-result
+        label: "Caller cannot classify"
+        type: end
+        spine: false
+    findings:
+      - slug: dispatch-resolution-errors-collapse-to-not-found
+        title: "Dispatch resolution failures are reported as a missing plugin"
+        criterion: "5.3"
+        surface: Error Handling
+        concern: moderate
+        locations:
+          - path: src/dispatch.rs
+            start_line: 38
+            end_line: 53
+        evidence: |
+          pub fn resolve(app_name: &str, subcommand: &str) -> Option<PathBuf> {
+              let binary = subcommand_binary(app_name, subcommand);
+              let path = std::env::var_os("PATH")?;
+              let absolute_paths: Vec<_> = std::env::split_paths(&path)
+                  .filter(|entry| entry.is_absolute())
+                  .collect();
+              if absolute_paths.is_empty() {
+                  return None;
+              }
+
+              let path = std::env::join_paths(absolute_paths).ok()?;
+              let cwd = std::env::current_dir().ok()?;
+              which::which_in(&binary, Some(path), cwd)
+                  .ok()
+                  .filter(|resolved| resolved.is_absolute())
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "11-14"
+            type: del
+            label: "Environment, filesystem, and resolver errors all become None"
+        mechanism: |
+          `None` means both "binary not found" and failure to join PATH, obtain the
+          current directory, or resolve/canonicalize a candidate. `run` then converts
+          these operational failures into `Ok(None)`, so callers report an unknown
+          command instead of an inspectable dispatch failure.
+        remediation: |
+          Add a typed `try_resolve` API distinguishing `NotFound` from environment,
+          current-directory, and resolver failures. Make `run` use it; retain `resolve`
+          as a compatibility wrapper if needed.
+        temporal:
+          introduced: 2026-04-09
+          last_modified: 2026-08-01
+          commit_count: 6
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 1]
+        chains: {enables: [], enabled_by: [], related: []}
+        effort: small
+        effort_notes: "Add one typed resolver and route the existing run path through it."
+
+      - slug: crash-dump-errors-erased
+        title: "Crash dump creation erases every failure cause"
+        criterion: "5.4"
+        surface: Error Handling
+        concern: moderate
+        locations:
+          - path: src/crash.rs
+            start_line: 162
+            end_line: 194
+        evidence: |
+          pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
+              if std::fs::create_dir_all(dir).is_err() {
+                  return None;
+              }
+
+              // Use timestamp chars that are safe in filenames
+              let ts = info.timestamp.replace([':', '.'], "-");
+              let filename = format!("{}-{}.crash", info.app_name, ts);
+              let path = dir.join(&filename);
+
+              let mut options = OpenOptions::new();
+              options.write(true).create_new(true);
+
+              #[cfg(unix)]
+              {
+                  use std::os::unix::fs::OpenOptionsExt as _;
+                  options.mode(0o600);
+              }
+
+              let mut file = options.open(&path).ok()?;
+              if serde_json::to_writer(&mut file, info).is_err() {
+                  drop(file);
+                  let _ = std::fs::remove_file(&path);
+                  return None;
+              }
+              drop(file);
+
+              if prune_crash_dumps(dir).is_err() {
+                  let _ = std::fs::remove_file(&path);
+                  return None;
+              }
+              Some(path)
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "2-4"
+            type: del
+            label: "Directory creation error is discarded"
+          - lines: "20-24"
+            type: del
+            label: "Open and serialization failures collapse to None"
+          - lines: "28-30"
+            type: del
+            label: "Retention and cleanup failures are erased"
+        mechanism: |
+          Directory creation, exclusive open, JSON serialization, pruning, and cleanup
+          failures all return the same `None`. Public callers cannot distinguish
+          permission denial, timestamp collision, disk exhaustion, serialization or
+          write failure, or
+          retention failure; ignored cleanup can also leave a partial file behind.
+        remediation: |
+          Add `CrashDumpError` with operation and path context plus a fallible
+          `try_write_crash_dump_to`. The panic hook can intentionally degrade that
+          result, while ordinary callers retain the source chain.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 9
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 1, 4]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [cache-clear-reports-partial-success, logging-resolution-uses-string-errors]
+        effort: small
+        effort_notes: "A typed error and compatibility wrapper are localized to the crash module."
+
+      - slug: cache-clear-reports-partial-success
+        title: "Cache clear returns success after skipped entries and failed removals"
+        criterion: "5.3"
+        surface: Error Handling
+        concern: advisory
+        locations:
+          - path: src/cache.rs
+            start_line: 234
+            end_line: 248
+        evidence: |2
+              pub fn clear(&self) -> Result<()> {
+                  if self.dir.exists() {
+                      for entry in std::fs::read_dir(&self.dir)
+                          .map_err(CacheError::from)?
+                          .flatten()
+                      {
+                          let path = entry.path();
+                          if path.extension().and_then(|e| e.to_str()) == Some("cache") {
+                              // Best-effort: skip files that can't be removed (permissions, etc.)
+                              let _ = std::fs::remove_file(&path);
+                          }
+                      }
+                  }
+                  Ok(())
+              }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "5"
+            type: del
+            label: "ReadDir entry errors are skipped"
+          - lines: "10"
+            type: del
+            label: "Removal failures are unobservable"
+          - lines: "14"
+            type: mark
+            label: "Partial clearing is reported as success"
+        mechanism: |
+          The comment calls removal best-effort, but the public operation is named
+          `clear` and exposes no partial-success report. Directory-entry errors and
+          failed removals can leave cache data behind while `clear` returns `Ok(())`.
+        remediation: |
+          Document `clear` explicitly as best-effort to preserve its existing contract.
+          Add a separately named strict/reporting API that propagates entry failures and
+          returns removed and failed paths; treat only `NotFound` as successful removal.
+        temporal:
+          introduced: 2026-04-09
+          last_modified: 2026-08-01
+          commit_count: 13
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 1, 7]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [crash-dump-errors-erased]
+        effort: trivial
+        effort_notes: "Documentation plus an additive strict/reporting API avoids breaking the existing best-effort behavior."
+
+      - slug: logging-resolution-uses-string-errors
+        title: "Public log-target resolution strips typed I/O sources"
+        criterion: "5.4"
+        surface: Error Handling
+        concern: advisory
+        locations:
+          - path: src/logging.rs
+            start_line: 188
+            end_line: 217
+        evidence: |
+          pub fn resolve_log_target_with(
+              service: &str,
+              path_override: Option<PathBuf>,
+              dir_override: Option<PathBuf>,
+              config_dir: Option<PathBuf>,
+          ) -> std::result::Result<LogTarget, String> {
+              if let Some(path) = path_override {
+                  return log_target_from_path(path);
+              }
+
+              if let Some(dir) = dir_override {
+                  return log_target_from_dir(dir, service);
+              }
+
+              if let Some(dir) = config_dir {
+                  return log_target_from_dir(dir, service);
+              }
+
+              let candidates = default_log_candidates(platform_log_dir(service));
+
+              let file_name = format!("{service}{LOG_FILE_SUFFIX}");
+
+              for dir in candidates {
+                  if ensure_writable(&dir, &file_name).is_ok() {
+                      return Ok(LogTarget { dir, file_name });
+                  }
+              }
+
+              Err("No writable log directory found".to_string())
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "6"
+            type: del
+            label: "Public API returns String rather than a typed error"
+          - lines: "24"
+            type: del
+            label: "Candidate-specific I/O failures are discarded"
+          - lines: "29"
+            type: del
+            label: "Only a generic message reaches callers"
+        mechanism: |
+          The public API discards candidate I/O errors before returning a generic String.
+          Callers cannot inspect the failing operation, path, `ErrorKind`, or source
+          chain, so permission and filesystem failures are indistinguishable from a
+          platform with no usable candidate directory.
+        remediation: |
+          Add a typed `try_resolve_log_target_with` API carrying attempted path,
+          operation, and `std::io::Error`. Preserve candidate failures there, while
+          retaining `resolve_log_target_with` as the String-returning compatibility wrapper.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 17
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 1, 7]
+        chains:
+          enables: []
+          enabled_by: []
+          related: [crash-dump-errors-erased]
+        effort: medium
+        effort_notes: "Requires a public error type and conversions across logging helpers."
+
+  - slug: public-type-contracts
+    title: "The Public Type Contract Surface"
+    thesis: "The API is broadly idiomatic, but two public types permit semantically invalid or needlessly awkward caller states."
+    verdict: "These are compatibility-sensitive polish issues, not correctness failures in Librebar's built-in paths. Stage them through additive constructors and derives rather than renaming or breaking public APIs in place."
+    findings:
+      - slug: release-info-allows-invalid-metadata
+        title: "ReleaseInfo represents validated versions and release URLs as interchangeable strings"
+        criterion: "10.3"
+        surface: Idiomatic Patterns
+        concern: advisory
+        locations:
+          - path: src/update.rs
+            start_line: 35
+            end_line: 49
+        evidence: |
+          pub struct ReleaseInfo {
+              /// Latest available version.
+              pub version: String,
+              /// URL where the release can be viewed or installed.
+              pub url: String,
+          }
+
+          impl ReleaseInfo {
+              /// Create release information.
+              pub fn new(version: impl Into<String>, url: impl Into<String>) -> Self {
+                  Self {
+                      version: version.into(),
+                      url: url.into(),
+                  }
+              }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "1-5"
+            type: del
+            label: "Distinct validated values share one raw representation"
+          - lines: "10-14"
+            type: del
+            label: "Construction cannot reject malformed or transposed arguments"
+        mechanism: |
+          `ReleaseSource` implementations are expected to return a semantic version and
+          an absolute release URL, yet construction accepts and exposes any two mutable
+          strings. A custom backend can transpose or malform them and still satisfy the
+          trait contract. Boundary validation prevents unsafe use and degrades invalid
+          data to a debug-logged missed update, but the type still permits the backend
+          implementation defect at construction time.
+        remediation: |
+          Add validated `ReleaseVersion` and `ReleaseUrl` newtypes plus
+          `ReleaseInfo::try_new`. Retain the current constructor and public fields during
+          a compatibility window, then make validated fields private in the next major.
+        temporal:
+          introduced: 2026-08-01
+          last_modified: 2026-08-01
+          commit_count: 1
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        chains: {enables: [], enabled_by: [], related: []}
+        effort: medium
+        effort_notes: "Validation helpers exist; most effort is compatibility for public fields and custom ReleaseSource implementations."
+
+      - slug: http-client-is-not-cloneable
+        title: "The pooled HTTP client cannot be cloned for concurrent reuse"
+        criterion: "9.4"
+        surface: Trait Design
+        concern: advisory
+        locations:
+          - path: src/http.rs
+            start_line: 506
+            end_line: 514
+        evidence: |
+          /// Uses rustls for TLS with Mozilla's CA root certificates.
+          /// HTTP/2 with HTTP/1.1 fallback. Connection pooling handled
+          /// automatically.
+          pub struct HttpClient {
+              inner: HttpService,
+              config: HttpClientConfig,
+              #[cfg(feature = "http-cookies")]
+              cookie_jar: Option<CookieJar>,
+          }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "4"
+            type: mark
+            label: "Public pooled client has no Clone implementation"
+        mechanism: |
+          The client owns a cloneable boxed service, cloneable configuration, and an
+          explicitly shareable cookie jar, but does not implement `Clone`. Callers
+          cannot move cheap handles into independent tasks or retain one after passing
+          it to another component without adding `Arc` or constructing a new pool.
+        remediation: |
+          Implement `Clone` for `HttpClientConfig` and `HttpClient`, preserving the
+          cookie jar's shared-store semantics. Add feature-gated compile-time coverage
+          for both `http` and `http-cookies`.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-07-31
+          commit_count: 4
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 0]
+        chains: {enables: [], enabled_by: [], related: []}
+        effort: small
+        effort_notes: "Stored components are cloneable; remaining work is trait implementation and feature-gated contract coverage."
+
+  - slug: cookie-hot-path
+    title: "The Cookie Hot-Path Surface"
+    thesis: "Cookie limits are bounded correctly, but enforcement pays whole-jar allocation and sorting costs after responses that cannot mutate the jar."
+    verdict: "This is a localized hot-path inefficiency with a cheap no-cookie fast path and a contained one-inventory refactor. The bounded default ceiling prevents unbounded growth, but not avoidable latency and lock contention."
+    flow:
+      - id: response
+        label: "HTTP response"
+        type: start
+      - id: set-cookie
+        label: "Set-Cookie present?"
+        type: decision
+        no: lock-jar
+      - id: parse
+        label: "Parse accepted cookies"
+        type: process
+      - id: lock-jar
+        label: "Acquire jar write lock"
+        type: process
+      - id: inventory
+        label: "Inventory jar 3 times"
+        type: process
+        findings:
+          - slug: cookie-limit-enforcement-scans-full-jar-on-every-response
+            label: "Clone + sort jar"
+      - id: release
+        label: "Release response"
+        type: end
+    findings:
+      - slug: cookie-limit-enforcement-scans-full-jar-on-every-response
+        title: "Cookie limit enforcement clones and sorts the entire jar after every HTTP response"
+        criterion: "12.12"
+        surface: Performance
+        concern: moderate
+        locations:
+          - path: src/http/cookies.rs
+            start_line: 212
+            end_line: 255
+          - path: src/http/cookies.rs
+            start_line: 170
+            end_line: 210
+          - path: src/http/cookies.rs
+            start_line: 290
+            end_line: 310
+          - path: src/http/cookies.rs
+            start_line: 439
+            end_line: 443
+        evidence: |2
+              fn enforce_limits(&self, store: &mut cookie_store::CookieStore) {
+                  let oversized = stored_cookie_keys(store)
+                      .into_iter()
+                      .filter(|key| key.size > self.limits.max_cookie_bytes)
+                      .collect::<Vec<_>>();
+                  for key in oversized {
+                      if store.remove(&key.domain, &key.path, &key.name).is_some() {
+                          tracing::warn!(
+                              cookie_name = %key.name,
+                              cookie_domain = %key.domain,
+                              size = key.size,
+                              limit = self.limits.max_cookie_bytes,
+                              "dropping stored cookie that exceeds configured size limit"
+                          );
+                      }
+                  }
+
+                  let mut by_domain = BTreeMap::<String, Vec<StoredCookieKey>>::new();
+                  for key in stored_cookie_keys(store) {
+                      by_domain.entry(key.domain.clone()).or_default().push(key);
+                  }
+                  for cookies in by_domain.values_mut() {
+                      cookies.sort_unstable();
+                      let excess = cookies
+                          .len()
+                          .saturating_sub(self.limits.max_cookies_per_domain);
+                      evict_cookies(
+                          store,
+                          cookies.iter().take(excess),
+                          "per-domain cookie count",
+                          self.limits.max_cookies_per_domain,
+                      );
+                  }
+
+                  let mut cookies = stored_cookie_keys(store);
+                  cookies.sort_unstable();
+                  let excess = cookies.len().saturating_sub(self.limits.max_cookies_total);
+                  evict_cookies(
+                      store,
+                      cookies.iter().take(excess),
+                      "total cookie count",
+                      self.limits.max_cookies_total,
+                  );
+              }
+        evidence_lang: rust
+        evidence_markers:
+          - lines: "2-5"
+            type: mark
+            label: "First complete inventory"
+          - lines: "18-21"
+            type: mark
+            label: "Second inventory plus cloned domain keys"
+          - lines: "35-43"
+            type: mark
+            label: "Third inventory and global sort"
+        mechanism: |
+          Every response with a parseable URL calls `store_response`, including the
+          common case without `Set-Cookie`. The method acquires the write lock and calls
+          `enforce_limits` unconditionally. Enforcement inventories the live jar three
+          times, cloning domain/path/name strings, grouping domains, and sorting both
+          domain and global vectors. At the 3,000-cookie default this synchronous work
+          runs on the async response path while serializing cookie-enabled responses.
+        remediation: |
+          Return before locking when `Set-Cookie` is absent or no cookie survives
+          parsing. After mutation, build one inventory and reuse it for size, domain,
+          and total checks; avoid cloned domain keys where indices or borrows suffice,
+          and skip sorting when counts are already in bounds.
+        temporal:
+          introduced: 2026-08-01
+          last_modified: 2026-08-01
+          commit_count: 7
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 6]
+        chains: {enables: [], enabled_by: [], related: []}
+        effort: small
+        effort_notes: "The fast path is local; inventory reuse is a focused rewrite with existing limit regression coverage."
+
+  - slug: dependency-fitness
+    title: "The Dependency Fitness Surface"
+    thesis: "The dependency graph is advisory-clean and intentionally gated, with two small default-feature leaks adding code that current Librebar paths cannot reach."
+    verdict: "RustSec, cargo-deny, and machete are clean. These findings are trimming opportunities, not supply-chain incidents; both can be resolved with manifest-only feature scoping and focused feature-matrix checks."
+    findings:
+      - slug: otel-enables-unused-default-integrations
+        title: "OpenTelemetry enables unused logging, metrics, and async-runtime integrations"
+        criterion: "13.8"
+        surface: Dependency Fitness
+        concern: advisory
+        locations:
+          - path: Cargo.toml
+            start_line: 59
+            end_line: 63
+        evidence: |
+          opentelemetry = { version = "0.32", features = ["trace"], optional = true }
+          opentelemetry-http = { version = "0.32", default-features = false, features = ["hyper"], optional = true }
+          opentelemetry_sdk = { version = "0.32", features = ["trace", "rt-tokio"], optional = true }
+          opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "hyper-client", "trace"], optional = true }
+          tracing-opentelemetry = { version = "0.33", optional = true }
+        evidence_lang: toml
+        evidence_markers:
+          - lines: "1"
+            type: del
+            label: "Default logging and metrics integrations remain enabled"
+          - lines: "3"
+            type: del
+            label: "Unused SDK Tokio adapter is explicit"
+          - lines: "5"
+            type: del
+            label: "Default metrics and tracing-log integrations remain enabled"
+        mechanism: |
+          The `otel` feature activates OpenTelemetry log/internal-log modules,
+          tracing-opentelemetry metrics/log integration, and `opentelemetry_sdk/rt-tokio`.
+          Librebar builds only a trace provider and span layer; its blocking exporters
+          own Tokio runtimes directly, so these integrations add compile and conditional
+          code without serving the implemented pipeline.
+        remediation: |
+          Disable defaults on `opentelemetry`, `opentelemetry_sdk`, and
+          `tracing-opentelemetry`; retain trace features and remove `rt-tokio` from the
+          SDK. Keep the direct Tokio dependency for private exporter runtimes and check
+          the three OTEL feature combinations.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 5
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 1]
+        chains: {enables: [], enabled_by: [], related: []}
+        effort: small
+        effort_notes: "Three manifest edits plus focused OTEL feature compilation."
+
+      - slug: diagnostics-tar-enables-unused-xattr
+        title: "Diagnostics enables tar's unused extended-attribute support"
+        criterion: "7.3"
+        surface: Supply Chain
+        concern: advisory
+        locations:
+          - path: Cargo.toml
+            start_line: 106
+            end_line: 108
+        evidence: |
+          flate2 = { version = "1.1", optional = true }
+          leakguard = { version = "0.8", default-features = false, features = ["std"], optional = true }
+          tar = { version = "0.4", optional = true }
+        evidence_lang: toml
+        evidence_markers:
+          - lines: "3"
+            type: del
+            label: "tar defaults enable the xattr dependency"
+        mechanism: |
+          `tar` defaults to its `xattr` feature, adding `xattr` and `rustix` on Unix.
+          That support is used while unpacking. Librebar's diagnostics implementation
+          only creates archives with `tar::Builder`, so the feature and native-facing
+          dependency path are unreachable from the delivered capability.
+        remediation: |
+          Declare `tar` with `default-features = false`. Archive creation does not
+          require the xattr feature; verify the diagnostics feature afterward.
+        temporal:
+          introduced: 2026-04-08
+          last_modified: 2026-08-01
+          commit_count: 3
+          monthly_commits: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2]
+        chains: {enables: [], enabled_by: [], related: []}
+        effort: trivial
+        effort_notes: "One manifest flag change followed by diagnostics feature compilation."
+
+summary:
+  counts:
+    critical: 0
+    significant: 2
+    moderate: 5
+    advisory: 6
+    note: 0
