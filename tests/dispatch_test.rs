@@ -20,6 +20,14 @@ fn resolve_returns_none_for_missing_command() {
     assert!(result.is_none());
 }
 
+#[test]
+fn try_resolve_returns_not_found_for_missing_command() {
+    let result = dispatch::try_resolve("librebar-test-nonexistent-42", "fakecmd");
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("not found on PATH"), "{error}");
+}
+
 #[cfg(unix)]
 #[test]
 fn resolve_ignores_empty_and_relative_path_entries() {

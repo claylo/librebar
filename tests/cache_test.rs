@@ -200,6 +200,20 @@ fn clear_removes_all() {
 }
 
 #[test]
+fn clear_report_returns_counts() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    cache.set("key1", b"val1", Duration::from_secs(60)).unwrap();
+    cache.set("key2", b"val2", Duration::from_secs(60)).unwrap();
+
+    let report = cache.clear_report().unwrap();
+
+    assert_eq!(report.removed, 2);
+    assert!(report.failed.is_empty());
+    assert!(cache.get("key1").unwrap().is_none());
+}
+
+#[test]
 fn default_cache_dir_contains_app_name() {
     let dir = librebar::cache::default_cache_dir("test-app");
     assert!(dir.is_some());

@@ -162,6 +162,41 @@ fn crash_dump_retention_keeps_the_ten_newest_files() {
 }
 
 #[test]
+fn try_write_crash_dump_returns_typed_errors() {
+    let info = crash_info(
+        "test panic",
+        None,
+        "2026-04-08T12:00:00.000Z",
+        std::env::consts::OS,
+        "",
+    );
+
+    // Attempting to write to a non-writable path yields a CreateDir error
+    let result = crash::try_write_crash_dump_to(&info, std::path::Path::new("/dev/null/crashes"));
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("create crash dump directory") || msg.contains("open crash dump file"),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[test]
+fn try_write_crash_dump_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let info = crash_info(
+        "test panic",
+        None,
+        "2026-04-08T12:00:01.000Z",
+        std::env::consts::OS,
+        "",
+    );
+
+    let path = crash::try_write_crash_dump_to(&info, tmp.path()).unwrap();
+    assert!(path.exists());
+}
+
+#[test]
 fn crash_dir_contains_app_name() {
     let dir = crash::crash_dump_dir("test-app");
     let path = dir.to_string_lossy();

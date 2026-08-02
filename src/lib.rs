@@ -45,7 +45,7 @@
 //! |---------|--------|---------------------------|
 //! | `lockfile` | [`lockfile`] | Advisory file locks for local process coordination |
 //! | `dispatch` | [`dispatch`] | Git-style `{app}-{subcommand}` plugin lookup on PATH |
-//! | `diagnostics` | [`diagnostics`] | `doctor` command framework + `.tar.gz` debug bundles |
+//! | `diagnostics` | [`diagnostics`] | `doctor` command framework + `.tar.zst` debug bundles |
 //!
 //! ## Benchmarking (dev-only)
 //!
@@ -306,6 +306,8 @@ struct BuilderInner {
     enable_logging: bool,
     #[cfg(feature = "logging")]
     log_dir: Option<std::path::PathBuf>,
+    #[cfg(feature = "logging")]
+    log_level: Option<String>,
     #[cfg(feature = "otel")]
     enable_otel: bool,
     #[cfg(feature = "shutdown")]
@@ -350,6 +352,8 @@ impl BuilderInner {
         let cli_flags = self.cli_flags();
         #[cfg(feature = "logging")]
         let do_logging = self.enable_logging;
+        #[cfg(feature = "logging")]
+        let default_log_level = self.log_level;
         let app_version = self
             .version
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
@@ -377,7 +381,7 @@ impl BuilderInner {
         #[cfg(all(feature = "logging", not(feature = "otel")))]
         if log_layer.is_some() {
             let (quiet, verbose) = cli_flags;
-            let filter = logging::env_filter(quiet, verbose, "info");
+            let filter = logging::env_filter(quiet, verbose, default_log_level.as_deref().unwrap_or("info"));
             tracing_subscriber::registry()
                 .with(filter)
                 .with(log_layer)
@@ -388,7 +392,7 @@ impl BuilderInner {
         #[cfg(all(feature = "logging", feature = "otel"))]
         if log_layer.is_some() || otel_layer.is_some() {
             let (quiet, verbose) = cli_flags;
-            let filter = logging::env_filter(quiet, verbose, "info");
+            let filter = logging::env_filter(quiet, verbose, default_log_level.as_deref().unwrap_or("info"));
             let mut layers: Vec<
                 Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>,
             > = Vec::new();
@@ -533,6 +537,8 @@ pub fn init(app_name: &str) -> Builder {
             enable_logging: false,
             #[cfg(feature = "logging")]
             log_dir: None,
+            #[cfg(feature = "logging")]
+            log_level: None,
             #[cfg(feature = "otel")]
             enable_otel: false,
             #[cfg(feature = "shutdown")]
@@ -685,7 +691,7 @@ where
     /// Returns an error if config loading or logging initialization fails.
     pub fn start(self) -> Result<App<C>> {
         let Self {
-            inner,
+            mut inner,
             config_source,
             config_overrides,
         } = self;
@@ -731,6 +737,27 @@ where
                 (config, sources)
             }
         };
+
+        // Extract log settings from config before initializing subsystems.
+        // Precedence: explicit .with_log_dir() > config log_dir; config log_level is the default.
+        #[cfg(feature = "logging")]
+        if let Ok(value) = serde_json::to_value(&config) {
+            if let Some(dir) = value
+                .get("log_dir")
+                .and_then(|v| v.as_str())
+                .filter(|d| !d.is_empty())
+                .filter(|_| inner.log_dir.is_none())
+            {
+                inner.log_dir = Some(std::path::PathBuf::from(dir));
+            }
+            if let Some(level) = value
+                .get("log_level")
+                .and_then(|v| v.as_str())
+                .filter(|_| inner.log_level.is_none())
+            {
+                inner.log_level = Some(level.to_string());
+            }
+        }
 
         let sub = inner.init_subsystems()?;
         Ok(App {

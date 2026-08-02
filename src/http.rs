@@ -161,7 +161,7 @@ pub use bytes::Bytes;
 ///     http_cache_stale_retention: Duration::from_secs(7 * 24 * 60 * 60),
 /// };
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct HttpClientConfig {
     /// Value sent as the `User-Agent` header on every request.
@@ -511,6 +511,17 @@ pub struct HttpClient {
     config: HttpClientConfig,
     #[cfg(feature = "http-cookies")]
     cookie_jar: Option<CookieJar>,
+}
+
+impl Clone for HttpClient {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            config: self.config.clone(),
+            #[cfg(feature = "http-cookies")]
+            cookie_jar: self.cookie_jar.clone(),
+        }
+    }
 }
 
 impl HttpClient {

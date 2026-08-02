@@ -11,9 +11,10 @@ use std::rc::Rc;
 use tempfile::TempDir;
 
 fn read_archive_entry(archive_path: &Path, name: &str) -> (Vec<u8>, u32) {
-    let file = std::fs::File::open(archive_path).unwrap();
-    let decoder = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
+    let compressed = std::fs::read(archive_path).unwrap();
+    let tar_bytes = rust_zstd::decompress(&compressed).unwrap();
+    let cursor = std::io::Cursor::new(tar_bytes);
+    let mut archive = tar::Archive::new(cursor);
 
     for entry in archive.entries().unwrap() {
         let mut entry = entry.unwrap();
@@ -140,7 +141,7 @@ fn debug_bundle_can_be_finished_from_a_chain() {
         .unwrap();
 
     assert!(archive_path.exists());
-    assert!(archive_path.to_string_lossy().ends_with(".tar.gz"));
+    assert!(archive_path.to_string_lossy().ends_with(".tar.zst"));
 }
 
 #[test]

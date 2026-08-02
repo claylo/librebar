@@ -2,7 +2,7 @@
 //!
 //! Provides a check registration and execution framework for "doctor"
 //! commands, plus a debug bundle builder that collects diagnostic
-//! information into a tar.gz archive.
+//! information into a tar.zst archive.
 //!
 //! # Example
 //!
@@ -463,7 +463,7 @@ fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
     Ok(file)
 }
 
-/// Builder for diagnostic debug bundles (tar.gz archives).
+/// Builder for diagnostic debug bundles (tar.zst archives).
 pub struct DebugBundle {
     app_name: String,
     dir: PathBuf,
@@ -555,8 +555,10 @@ impl DebugBundle {
         self.add_text("doctor-report.txt", &report)
     }
 
-    /// Write the tar.gz archive and return its path.
+    /// Write the tar.zst archive and return its path.
     pub fn finish(self) -> Result<PathBuf> {
+        use std::io::Write as _;
+
         std::fs::create_dir_all(&self.dir).map_err(Error::Diagnostic)?;
 
         let timestamp = std::time::SystemTime::now()
@@ -564,12 +566,10 @@ impl DebugBundle {
             .unwrap_or_default()
             .as_secs();
 
-        let filename = format!("{}-debug-{timestamp}.tar.gz", self.app_name);
+        let filename = format!("{}-debug-{timestamp}.tar.zst", self.app_name);
         let path = self.dir.join(&filename);
 
-        let file = create_private_file(&path).map_err(Error::Diagnostic)?;
-        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        let mut archive = tar::Builder::new(encoder);
+        let mut archive = tar::Builder::new(Vec::new());
 
         for entry in &self.entries {
             match entry {
@@ -595,11 +595,11 @@ impl DebugBundle {
             }
         }
 
-        archive
-            .into_inner()
-            .map_err(Error::Diagnostic)?
-            .finish()
-            .map_err(Error::Diagnostic)?;
+        let tar_bytes = archive.into_inner().map_err(Error::Diagnostic)?;
+        let compressed = rust_zstd::compress(&tar_bytes, 3);
+
+        let mut file = create_private_file(&path).map_err(Error::Diagnostic)?;
+        file.write_all(&compressed).map_err(Error::Diagnostic)?;
 
         tracing::info!(path = %path.display(), "debug bundle created");
         Ok(path)

@@ -25,6 +25,7 @@
 //! Default: `~/Library/Caches/{app}/librebar/` on macOS,
 //! `$XDG_CACHE_HOME/{app}/librebar/` on Linux.
 
+use std::fs::File;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -89,6 +90,7 @@ impl Cache {
         header[CACHE_MAGIC.len()..].copy_from_slice(&expires_at.to_be_bytes());
 
         let path = self.key_path(key);
+        let _lock = acquire_cache_lock(&self.dir);
         write_entry(&path, &header, parts).map_err(CacheError::from)?;
 
         tracing::debug!(key, expires_at, "cache entry written");
@@ -175,6 +177,7 @@ impl Cache {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(error) => return Err(CacheError::from(error).into()),
         };
+        let _lock = acquire_cache_lock(&self.dir);
         let mut removed = 0;
 
         for entry in entries {
@@ -228,10 +231,28 @@ impl Cache {
 
     /// Clear all cached entries.
     ///
+    /// Best-effort: individual files that cannot be removed are silently skipped.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::Cache`](crate::Error::Cache) if the cache directory cannot be read.
     pub fn clear(&self) -> Result<()> {
+        self.clear_report().map(|_| ())
+    }
+
+    /// Clear all cached entries and report results.
+    ///
+    /// Best-effort: individual files that cannot be removed are recorded in
+    /// [`ClearReport::failed`] rather than aborting the operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Cache`](crate::Error::Cache) if the cache directory cannot be read.
+    pub fn clear_report(&self) -> Result<ClearReport> {
+        let mut report = ClearReport {
+            removed: 0,
+            failed: Vec::new(),
+        };
         if self.dir.exists() {
             for entry in std::fs::read_dir(&self.dir)
                 .map_err(CacheError::from)?
@@ -239,12 +260,14 @@ impl Cache {
             {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("cache") {
-                    // Best-effort: skip files that can't be removed (permissions, etc.)
-                    let _ = std::fs::remove_file(&path);
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => report.removed += 1,
+                        Err(_) => report.failed.push(path),
+                    }
                 }
             }
         }
-        Ok(())
+        Ok(report)
     }
 
     /// Path to the cache directory.
@@ -306,6 +329,34 @@ fn read_expiry(file: &mut std::fs::File) -> std::result::Result<u64, CacheError>
 fn read_expiry_at(path: &Path) -> std::result::Result<u64, CacheError> {
     let mut file = std::fs::File::open(path)?;
     read_expiry(&mut file)
+}
+
+/// Result of a [`Cache::clear_report`] operation.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct ClearReport {
+    /// Number of cache entries successfully removed.
+    pub removed: usize,
+    /// Paths that could not be removed (permissions, in-use, etc.).
+    pub failed: Vec<PathBuf>,
+}
+
+/// Acquire an advisory lock on the cache directory (blocking).
+///
+/// Returns `None` if the lock file cannot be opened or locked; callers
+/// treat a failed lock as non-fatal so the cache remains usable on
+/// filesystems that do not support advisory locking.
+fn acquire_cache_lock(dir: &Path) -> Option<File> {
+    let lock_path = dir.join(".cache.lock");
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .ok()?;
+    file.lock().ok()?;
+    Some(file)
 }
 
 fn is_v2_cache_path(path: &Path) -> bool {

@@ -1007,6 +1007,13 @@ async fn retries_use_exponential_backoff() {
     server.join().unwrap();
 }
 
+#[test]
+fn client_is_cloneable() {
+    let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
+    let cloned = client.clone();
+    assert_eq!(cloned.config().user_agent, "librebar-test/0.1.0");
+}
+
 #[tokio::test]
 #[ignore = "hits api.github.com; run with --run-ignored or `-- --ignored`"]
 async fn https_get_succeeds() {

@@ -59,3 +59,11 @@ fn multiple_shutdown_calls_are_safe() {
     handle.shutdown();
     assert!(handle.is_shutting_down());
 }
+
+#[tokio::test]
+async fn duplicate_signal_registration_is_a_noop() {
+    let handle = ShutdownHandle::new();
+    handle.register_signals().unwrap();
+    // Second call should succeed (no-op) without error
+    handle.register_signals().unwrap();
+}

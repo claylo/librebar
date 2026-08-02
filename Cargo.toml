@@ -56,11 +56,11 @@ tokio = { version = "1.52", features = ["rt", "macros", "signal", "sync", "time"
 
 # Feature: otel
 async-trait = { version = "0.1", optional = true }
-opentelemetry = { version = "0.32", features = ["trace"], optional = true }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"], optional = true }
 opentelemetry-http = { version = "0.32", default-features = false, features = ["hyper"], optional = true }
-opentelemetry_sdk = { version = "0.32", features = ["trace", "rt-tokio"], optional = true }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"], optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "hyper-client", "trace"], optional = true }
-tracing-opentelemetry = { version = "0.33", optional = true }
+tracing-opentelemetry = { version = "0.33", default-features = false, optional = true }
 
 # Feature: mcp
 rmcp = { version = "3.1", default-features = false, features = ["server", "transport-io"], optional = true }
@@ -103,9 +103,9 @@ semver = { version = "1.0", optional = true }
 which = { version = "8.0", optional = true }
 
 # Feature: diagnostics
-flate2 = { version = "1.1", optional = true }
 leakguard = { version = "0.8", default-features = false, features = ["std"], optional = true }
-tar = { version = "0.4", optional = true }
+rust-zstd = { version = "0.1", default-features = false, optional = true }
+tar = { version = "0.4", default-features = false, optional = true }
 
 # Feature: bench (wall-clock via divan)
 divan = { version = "0.1", optional = true }
@@ -168,7 +168,7 @@ required-features = ["bench", "cache"]
 default = ["cli", "config", "logging", "crash", "cache", "diagnostics"]
 cli = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:owo-colors", "dep:serde_json"]
 config = ["dep:toml", "dep:serde-saphyr", "dep:serde_json", "dep:serde_path_to_error", "dep:camino", "dep:directories"]
-logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:serde_json", "dep:directories"]
+logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:serde_json", "dep:directories", "dep:rust-zstd"]
 shutdown = ["dep:tokio"]
 crash = ["dep:serde_json"]
 otel = ["logging", "dep:async-trait", "dep:opentelemetry", "dep:opentelemetry-http", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tokio"]
@@ -182,7 +182,7 @@ http-cache = ["http", "cache", "dep:http-cache-semantics", "dep:sha2"]
 cache = ["dep:serde_json", "dep:directories", "dep:base64", "dep:tempfile"]
 update = ["http", "cache", "dep:async-trait", "dep:semver", "dep:serde_json"]
 dispatch = ["cli", "dep:which"]
-diagnostics = ["config", "logging", "dep:flate2", "dep:leakguard", "dep:tar"]
+diagnostics = ["config", "logging", "dep:leakguard", "dep:rust-zstd", "dep:tar"]
 bench = ["dep:divan"]
 bench-gungraun = ["dep:gungraun"]
 

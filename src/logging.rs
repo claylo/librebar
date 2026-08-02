@@ -216,6 +216,68 @@ pub fn resolve_log_target_with(
     Err("No writable log directory found".to_string())
 }
 
+/// Errors during log target resolution.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum LogTargetError {
+    /// The log path does not contain a file name component.
+    #[error("log path must include a file name")]
+    NoFileName,
+    /// The log path is not valid UTF-8.
+    #[error("log path must be valid UTF-8")]
+    InvalidUtf8,
+    /// The log directory could not be created.
+    #[error("failed to create log directory {dir}")]
+    CreateDirFailed {
+        /// Directory that could not be created.
+        dir: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// The log file could not be opened for append.
+    #[error("failed to open log file {path}")]
+    OpenFailed {
+        /// Path to the log file.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// No writable log directory was found among the candidates.
+    #[error("no writable log directory found among {candidates:?}")]
+    NoWritableDir {
+        /// Candidate directories that were tried.
+        candidates: Vec<PathBuf>,
+    },
+}
+
+/// Resolve log target with typed errors.
+///
+/// Same semantics as [`resolve_log_target_with`] but returns a typed error
+/// instead of a plain string.
+pub fn try_resolve_log_target_with(
+    service: &str,
+    path_override: Option<PathBuf>,
+    dir_override: Option<PathBuf>,
+    config_dir: Option<PathBuf>,
+) -> std::result::Result<LogTarget, LogTargetError> {
+    resolve_log_target_with(service, path_override, dir_override, config_dir)
+        .map_err(|msg| {
+            // Map known string error patterns to typed variants.
+            // This preserves backward compatibility with the string-based API.
+            if msg.contains("file name") {
+                LogTargetError::NoFileName
+            } else if msg.contains("UTF-8") {
+                LogTargetError::InvalidUtf8
+            } else {
+                LogTargetError::NoWritableDir {
+                    candidates: Vec::new(),
+                }
+            }
+        })
+}
+
 fn default_log_candidates(platform_dir: Option<PathBuf>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -311,30 +373,37 @@ fn log_target_from_path(path: PathBuf) -> std::result::Result<LogTarget, String>
     })
 }
 
-/// Verify a directory is writable by opening the current daily log file for append.
+/// Verify a directory is writable by opening the log file for append.
 fn ensure_writable(dir: &Path, file_name: &str) -> std::result::Result<(), String> {
     std::fs::create_dir_all(dir)
         .map_err(|e| format!("Failed to create log directory {}: {e}", dir.display()))?;
 
-    open_daily_log_file(dir, file_name, &current_log_date())?;
+    let path = dir.join(file_name);
+    open_private_append_file(&path)
+        .map_err(|error| format!("Failed to open log file {}: {error}", path.display()))?;
 
     Ok(())
 }
 
 struct PrivateDailyAppender {
     dir: PathBuf,
-    file_name_prefix: String,
+    file_stem: String,
+    file_ext: String,
     date: String,
     file: File,
 }
 
 impl PrivateDailyAppender {
-    fn new(dir: PathBuf, file_name_prefix: String) -> std::result::Result<Self, String> {
+    fn new(dir: PathBuf, file_name: String) -> std::result::Result<Self, String> {
+        let (file_stem, file_ext) = split_log_file_name(&file_name);
         let date = current_log_date();
-        let file = open_daily_log_file(&dir, &file_name_prefix, &date)?;
+        let path = dir.join(&file_name);
+        let file = open_private_append_file(&path)
+            .map_err(|error| format!("Failed to open log file {}: {error}", path.display()))?;
         Ok(Self {
             dir,
-            file_name_prefix,
+            file_stem,
+            file_ext,
             date,
             file,
         })
@@ -343,11 +412,33 @@ impl PrivateDailyAppender {
     fn rotate_if_needed(&mut self) -> io::Result<()> {
         let date = current_log_date();
         if date != self.date {
-            self.file = open_daily_log_file(&self.dir, &self.file_name_prefix, &date)
-                .map_err(io::Error::other)?;
+            let current_path = self.stable_path();
+            let rotated_name = if self.file_ext.is_empty() {
+                format!("{}.{}", self.file_stem, self.date)
+            } else {
+                format!("{}.{}.{}", self.file_stem, self.date, self.file_ext)
+            };
+            let rotated_path = self.dir.join(rotated_name);
+            // Best-effort rename; continue even if it fails (e.g., concurrent process)
+            let _ = std::fs::rename(&current_path, &rotated_path);
+            self.file = open_private_append_file(&current_path).map_err(io::Error::other)?;
             self.date = date;
+
+            // Best-effort background compression of the rotated file.
+            // If anything fails the uncompressed file remains — no data loss.
+            std::thread::spawn(move || {
+                compress_rotated_log(&rotated_path);
+            });
         }
         Ok(())
+    }
+
+    fn stable_path(&self) -> PathBuf {
+        if self.file_ext.is_empty() {
+            self.dir.join(&self.file_stem)
+        } else {
+            self.dir.join(format!("{}.{}", self.file_stem, self.file_ext))
+        }
     }
 }
 
@@ -366,19 +457,62 @@ fn current_log_date() -> String {
     format_timestamp()[..10].to_string()
 }
 
-fn open_daily_log_file(
-    dir: &Path,
-    file_name_prefix: &str,
-    date: &str,
-) -> std::result::Result<File, String> {
-    let path = dir.join(format!("{file_name_prefix}.{date}"));
-    open_private_append_file(&path)
-        .map_err(|error| format!("Failed to open log file {}: {error}", path.display()))
+fn split_log_file_name(file_name: &str) -> (String, String) {
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file_name)
+        .to_string();
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    (stem, ext)
 }
 
 fn open_private_append_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+
+    let file = options.open(path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(file)
+}
+
+/// Compress a rotated log file to `.zst` and remove the original.
+///
+/// Best-effort: if any step fails the uncompressed file remains intact.
+fn compress_rotated_log(path: &Path) {
+    let Ok(data) = std::fs::read(path) else {
+        return;
+    };
+    let compressed = rust_zstd::compress(&data, 3);
+    let zst_path = PathBuf::from(format!("{}.zst", path.display()));
+    if create_private_file(&zst_path)
+        .and_then(|mut file| file.write_all(&compressed))
+        .is_ok()
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn create_private_file(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
 
     #[cfg(unix)]
     {

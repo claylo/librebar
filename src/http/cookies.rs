@@ -168,6 +168,9 @@ impl CookieJar {
     }
 
     fn store_response(&self, url: &Url, response: &Response<ResponseBody>) {
+        if !response.headers().contains_key(SET_COOKIE) {
+            return;
+        }
         let cookies = response
             .headers()
             .get_all(SET_COOKIE)
@@ -210,48 +213,59 @@ impl CookieJar {
     }
 
     fn enforce_limits(&self, store: &mut cookie_store::CookieStore) {
-        let oversized = stored_cookie_keys(store)
-            .into_iter()
-            .filter(|key| key.size > self.limits.max_cookie_bytes)
-            .collect::<Vec<_>>();
-        for key in oversized {
-            if store.remove(&key.domain, &key.path, &key.name).is_some() {
-                tracing::warn!(
-                    cookie_name = %key.name,
-                    cookie_domain = %key.domain,
-                    size = key.size,
-                    limit = self.limits.max_cookie_bytes,
-                    "dropping stored cookie that exceeds configured size limit"
+        let mut keys = stored_cookie_keys(store);
+
+        // 1. Remove oversized cookies
+        keys.retain(|key| {
+            if key.size > self.limits.max_cookie_bytes {
+                if store.remove(&key.domain, &key.path, &key.name).is_some() {
+                    tracing::warn!(
+                        cookie_name = %key.name,
+                        cookie_domain = %key.domain,
+                        size = key.size,
+                        limit = self.limits.max_cookie_bytes,
+                        "dropping stored cookie that exceeds configured size limit"
+                    );
+                }
+                false
+            } else {
+                true
+            }
+        });
+
+        // 2. Per-domain eviction
+        let mut by_domain = BTreeMap::<String, Vec<StoredCookieKey>>::new();
+        for key in keys {
+            by_domain.entry(key.domain.clone()).or_default().push(key);
+        }
+        let mut remaining = Vec::new();
+        for cookies in by_domain.values_mut() {
+            let excess = cookies.len().saturating_sub(self.limits.max_cookies_per_domain);
+            if excess > 0 {
+                cookies.sort_unstable();
+                evict_cookies(
+                    store,
+                    cookies.iter().take(excess),
+                    "per-domain cookie count",
+                    self.limits.max_cookies_per_domain,
                 );
+                remaining.extend(cookies.drain(excess..));
+            } else {
+                remaining.append(cookies);
             }
         }
 
-        let mut by_domain = BTreeMap::<String, Vec<StoredCookieKey>>::new();
-        for key in stored_cookie_keys(store) {
-            by_domain.entry(key.domain.clone()).or_default().push(key);
-        }
-        for cookies in by_domain.values_mut() {
-            cookies.sort_unstable();
-            let excess = cookies
-                .len()
-                .saturating_sub(self.limits.max_cookies_per_domain);
+        // 3. Total eviction using remaining keys
+        let excess = remaining.len().saturating_sub(self.limits.max_cookies_total);
+        if excess > 0 {
+            remaining.sort_unstable();
             evict_cookies(
                 store,
-                cookies.iter().take(excess),
-                "per-domain cookie count",
-                self.limits.max_cookies_per_domain,
+                remaining.iter().take(excess),
+                "total cookie count",
+                self.limits.max_cookies_total,
             );
         }
-
-        let mut cookies = stored_cookie_keys(store);
-        cookies.sort_unstable();
-        let excess = cookies.len().saturating_sub(self.limits.max_cookies_total);
-        evict_cookies(
-            store,
-            cookies.iter().take(excess),
-            "total cookie count",
-            self.limits.max_cookies_total,
-        );
     }
 
     fn read_store(&self) -> RwLockReadGuard<'_, cookie_store::CookieStore> {

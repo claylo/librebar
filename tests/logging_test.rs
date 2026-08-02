@@ -52,10 +52,9 @@ fn log_target_from_dir_appends_service() {
 }
 
 #[test]
-fn log_target_probe_uses_daily_appender_name() {
+fn log_target_probe_uses_stable_file_name() {
     let temp = tempfile::TempDir::new().unwrap();
     let service = "librebar-probe-test";
-    let date = &logging::format_timestamp()[..10];
 
     logging::resolve_log_target_with(service, None, Some(temp.path().into()), None).unwrap();
 
@@ -64,7 +63,7 @@ fn log_target_probe_uses_daily_appender_name() {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect::<Vec<_>>();
     files.sort();
-    assert_eq!(files, [format!("{service}.jsonl.{date}")]);
+    assert_eq!(files, [format!("{service}.jsonl")]);
 }
 
 #[test]
@@ -86,8 +85,7 @@ fn initialized_log_file_is_owner_only() {
 
     let temp = tempfile::TempDir::new().unwrap();
     let service = "librebar-private-log-test";
-    let date = &logging::format_timestamp()[..10];
-    let log_path = temp.path().join(format!("{service}.jsonl.{date}"));
+    let log_path = temp.path().join(format!("{service}.jsonl"));
     std::fs::write(&log_path, b"existing log\n").unwrap();
     std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -132,4 +130,35 @@ fn platform_log_dir_uses_library_logs_on_macos() {
         path.contains("Library/Logs"),
         "macOS should use ~/Library/Logs/: {path}"
     );
+}
+
+// ─── typed error resolution tests ───────────────────────────────────
+
+#[test]
+fn try_resolve_log_target_returns_typed_error_for_path_without_file_name() {
+    let result = logging::try_resolve_log_target_with(
+        "demo",
+        Some(std::path::PathBuf::from("/")),
+        None,
+        None,
+    );
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(
+        error.to_string().contains("file name"),
+        "expected NoFileName, got: {error}"
+    );
+}
+
+#[test]
+fn try_resolve_log_target_succeeds_with_dir_override() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let target = logging::try_resolve_log_target_with(
+        "demo",
+        None,
+        Some(temp.path().into()),
+        None,
+    )
+    .unwrap();
+    assert_eq!(target.file_name, "demo.jsonl");
 }

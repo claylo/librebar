@@ -47,6 +47,78 @@ impl ReleaseInfo {
             url: url.into(),
         }
     }
+
+    /// Create release information with validated version and URL.
+    pub fn try_new(
+        version: impl Into<String>,
+        url: impl Into<String>,
+    ) -> std::result::Result<Self, ReleaseInfoError> {
+        let version = ReleaseVersion::new(version)?;
+        let url = ReleaseUrl::new(url)?;
+        Ok(Self {
+            version: version.0,
+            url: url.0,
+        })
+    }
+}
+
+/// Errors from constructing a [`ReleaseInfo`] with validation.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReleaseInfoError {
+    /// Version string is empty or does not start with a digit or `v`.
+    #[error("invalid release version: {0:?}")]
+    InvalidVersion(String),
+    /// URL is not a parseable HTTPS URL.
+    #[error("invalid release URL: {0:?}")]
+    InvalidUrl(String),
+}
+
+/// A validated release version string.
+///
+/// Must be non-empty and start with a digit or `v`.
+#[derive(Clone, Debug)]
+pub struct ReleaseVersion(String);
+
+impl ReleaseVersion {
+    /// Create a validated release version.
+    pub fn new(version: impl Into<String>) -> std::result::Result<Self, ReleaseInfoError> {
+        let version = version.into();
+        if version.is_empty()
+            || !version
+                .starts_with(|c: char| c.is_ascii_digit() || c == 'v')
+        {
+            return Err(ReleaseInfoError::InvalidVersion(version));
+        }
+        Ok(Self(version))
+    }
+
+    /// Return the version string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A validated release URL.
+///
+/// Must be a parseable HTTPS URL.
+#[derive(Clone, Debug)]
+pub struct ReleaseUrl(String);
+
+impl ReleaseUrl {
+    /// Create a validated release URL.
+    pub fn new(url: impl Into<String>) -> std::result::Result<Self, ReleaseInfoError> {
+        let url = url.into();
+        if !release_url_is_valid(&url) {
+            return Err(ReleaseInfoError::InvalidUrl(url));
+        }
+        Ok(Self(url))
+    }
+
+    /// Return the URL string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 fn release_url_is_valid(url: &str) -> bool {

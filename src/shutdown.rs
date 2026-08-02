@@ -27,7 +27,10 @@
 //! # }
 //! ```
 
+use std::sync::OnceLock;
 use tokio::sync::watch;
+
+static SIGNAL_REGISTERED: OnceLock<()> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ShutdownSignal {
@@ -128,6 +131,11 @@ impl ShutdownHandle {
     ///
     /// Returns an error if signal handler registration fails.
     pub fn register_signals(&self) -> crate::Result<()> {
+        if SIGNAL_REGISTERED.set(()).is_err() {
+            tracing::warn!("signal handlers already registered; ignoring duplicate registration");
+            return Ok(());
+        }
+
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|error| crate::Error::NoRuntime(crate::error::boxed_error(error)))?;
 

@@ -23,11 +23,58 @@ use std::process::{Command, ExitStatus};
 
 use crate::error::{Error, Result};
 
+/// Errors during subcommand resolution.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DispatchError {
+    /// PATH environment variable is not set.
+    #[error("PATH is not set")]
+    PathNotSet,
+    /// No absolute PATH entries contain the binary.
+    #[error("no absolute PATH entries available")]
+    PathJoinFailed,
+    /// Could not determine the current directory.
+    #[error("could not determine current directory")]
+    CurrentDirFailed(#[source] std::io::Error),
+    /// Binary was not found on any absolute PATH entry.
+    #[error("{binary} not found on PATH")]
+    NotFound {
+        /// The binary name that was searched for.
+        binary: String,
+    },
+}
+
 /// Construct the expected binary name for a subcommand.
 ///
 /// Returns `"{app_name}-{subcommand}"`.
 pub fn subcommand_binary(app_name: &str, subcommand: &str) -> String {
     format!("{app_name}-{subcommand}")
+}
+
+/// Resolve the full path to a subcommand binary on PATH, returning typed errors.
+///
+/// Empty and relative PATH entries are ignored so dispatch never resolves a
+/// plugin from the process working directory.
+///
+/// # Errors
+///
+/// Returns a [`DispatchError`] variant describing why resolution failed.
+pub fn try_resolve(app_name: &str, subcommand: &str) -> std::result::Result<PathBuf, DispatchError> {
+    let binary = subcommand_binary(app_name, subcommand);
+    let path = std::env::var_os("PATH").ok_or(DispatchError::PathNotSet)?;
+    let absolute_paths: Vec<_> = std::env::split_paths(&path)
+        .filter(|entry| entry.is_absolute())
+        .collect();
+    if absolute_paths.is_empty() {
+        return Err(DispatchError::PathJoinFailed);
+    }
+
+    let path = std::env::join_paths(absolute_paths).map_err(|_| DispatchError::PathJoinFailed)?;
+    let cwd = std::env::current_dir().map_err(DispatchError::CurrentDirFailed)?;
+    which::which_in(&binary, Some(path), cwd)
+        .ok()
+        .filter(|resolved| resolved.is_absolute())
+        .ok_or(DispatchError::NotFound { binary })
 }
 
 /// Resolve the full path to a subcommand binary on PATH.
@@ -36,20 +83,7 @@ pub fn subcommand_binary(app_name: &str, subcommand: &str) -> String {
 /// plugin from the process working directory. Returns `None` if the binary is
 /// not found on an absolute PATH entry.
 pub fn resolve(app_name: &str, subcommand: &str) -> Option<PathBuf> {
-    let binary = subcommand_binary(app_name, subcommand);
-    let path = std::env::var_os("PATH")?;
-    let absolute_paths: Vec<_> = std::env::split_paths(&path)
-        .filter(|entry| entry.is_absolute())
-        .collect();
-    if absolute_paths.is_empty() {
-        return None;
-    }
-
-    let path = std::env::join_paths(absolute_paths).ok()?;
-    let cwd = std::env::current_dir().ok()?;
-    which::which_in(&binary, Some(path), cwd)
-        .ok()
-        .filter(|resolved| resolved.is_absolute())
+    try_resolve(app_name, subcommand).ok()
 }
 
 /// Run an external subcommand, passing through arguments.
@@ -67,8 +101,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let Some(binary_path) = resolve(app_name, subcommand) else {
-        return Ok(None);
+    let binary_path = match try_resolve(app_name, subcommand) {
+        Ok(path) => path,
+        Err(DispatchError::NotFound { .. }) => return Ok(None),
+        Err(error) => {
+            return Err(Error::Dispatch(std::io::Error::other(error)))
+        }
     };
 
     tracing::debug!(binary = %binary_path.display(), "dispatching to external command");

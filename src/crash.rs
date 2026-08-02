@@ -122,6 +122,24 @@ impl CrashInfo {
     }
 }
 
+/// Errors during crash dump writing.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum CrashDumpError {
+    /// Failed to create the crash dump directory.
+    #[error("failed to create crash dump directory")]
+    CreateDir(#[source] std::io::Error),
+    /// Failed to open the crash dump file.
+    #[error("failed to open crash dump file")]
+    OpenFile(#[source] std::io::Error),
+    /// Failed to serialize crash information.
+    #[error("failed to serialize crash info")]
+    Serialize(#[source] serde_json::Error),
+    /// Failed to prune old crash dumps.
+    #[error("failed to prune crash dumps")]
+    Prune(#[source] std::io::Error),
+}
+
 /// Install a custom panic hook that captures crash info and writes a dump.
 ///
 /// Chains with the previous panic hook so default behavior (e.g., printing
@@ -153,18 +171,14 @@ pub fn install(app_name: &str, version: &str) {
     }));
 }
 
-/// Write a crash dump to a file in `dir`.
+/// Write a crash dump to a file in `dir`, returning typed errors on failure.
 ///
 /// The file is named with a timestamp and `.crash` extension. Files are
 /// owner-only on Unix, existing same-timestamp files are not replaced, and
 /// only the ten newest crash dumps in `dir` are retained.
-/// Returns the path to the written file, or `None` if writing failed.
-pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
-    if std::fs::create_dir_all(dir).is_err() {
-        return None;
-    }
+pub fn try_write_crash_dump_to(info: &CrashInfo, dir: &Path) -> std::result::Result<PathBuf, CrashDumpError> {
+    std::fs::create_dir_all(dir).map_err(CrashDumpError::CreateDir)?;
 
-    // Use timestamp chars that are safe in filenames
     let ts = info.timestamp.replace([':', '.'], "-");
     let filename = format!("{}-{}.crash", info.app_name, ts);
     let path = dir.join(&filename);
@@ -178,19 +192,24 @@ pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
         options.mode(0o600);
     }
 
-    let mut file = options.open(&path).ok()?;
-    if serde_json::to_writer(&mut file, info).is_err() {
+    let mut file = options.open(&path).map_err(CrashDumpError::OpenFile)?;
+    if let Err(error) = serde_json::to_writer(&mut file, info) {
         drop(file);
         let _ = std::fs::remove_file(&path);
-        return None;
+        return Err(CrashDumpError::Serialize(error));
     }
     drop(file);
 
-    if prune_crash_dumps(dir).is_err() {
-        let _ = std::fs::remove_file(&path);
-        return None;
-    }
-    Some(path)
+    prune_crash_dumps(dir).map_err(CrashDumpError::Prune)?;
+    Ok(path)
+}
+
+/// Write a crash dump to a file in `dir`.
+///
+/// Convenience wrapper around [`try_write_crash_dump_to`] that discards the error.
+/// Returns the path to the written file, or `None` if writing failed.
+pub fn write_crash_dump_to(info: &CrashInfo, dir: &Path) -> Option<PathBuf> {
+    try_write_crash_dump_to(info, dir).ok()
 }
 
 /// Return the platform-appropriate crash dump directory for an app.

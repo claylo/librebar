@@ -384,3 +384,31 @@ fn update_info_display_escapes_terminal_controls() {
     assert!(message.contains(r"\u{1b}"));
     assert!(message.contains(r"\n"));
 }
+
+#[test]
+fn release_info_try_new_validates_version() {
+    assert!(librebar::update::ReleaseInfo::try_new("0.2.0", "https://example.com/release").is_ok());
+    assert!(librebar::update::ReleaseInfo::try_new("v0.2.0", "https://example.com/release").is_ok());
+    assert!(librebar::update::ReleaseInfo::try_new("", "https://example.com/release").is_err());
+    assert!(librebar::update::ReleaseInfo::try_new("!invalid", "https://example.com/release").is_err());
+}
+
+#[test]
+fn release_info_try_new_validates_url() {
+    assert!(librebar::update::ReleaseInfo::try_new("0.2.0", "https://example.com/release").is_ok());
+    assert!(librebar::update::ReleaseInfo::try_new("0.2.0", "not a url").is_err());
+    assert!(librebar::update::ReleaseInfo::try_new("0.2.0", "http://example.com/release").is_err());
+}
+
+#[test]
+fn release_version_newtype_validates() {
+    assert!(librebar::update::ReleaseVersion::new("0.2.0").is_ok());
+    assert!(librebar::update::ReleaseVersion::new("v0.2.0").is_ok());
+    assert!(librebar::update::ReleaseVersion::new("").is_err());
+}
+
+#[test]
+fn release_url_newtype_validates() {
+    assert!(librebar::update::ReleaseUrl::new("https://example.com/release").is_ok());
+    assert!(librebar::update::ReleaseUrl::new("ftp://example.com").is_err());
+}
