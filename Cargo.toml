@@ -187,9 +187,6 @@ bench = ["dep:divan"]
 bench-gungraun = ["dep:gungraun"]
 
 [lints.rust]
-# Use "deny" instead of "forbid" to allow benchmark harnesses to override
-# when their instrumentation machinery requires it
-unsafe_code = "deny"
 # Encourage documentation - warn on public items missing docs
 missing_docs = "warn"
 

@@ -142,7 +142,7 @@
 //! 2. Initialize logging (reads verbosity from CLI flags if provided)
 //! 3. Return [`App<C>`] holding all initialized state and guards
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 #[cfg(all(
