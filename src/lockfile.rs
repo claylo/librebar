@@ -15,7 +15,7 @@
 //! # Ok::<(), librebar::Error>(())
 //! ```
 
-use std::fs::File;
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
@@ -91,7 +91,8 @@ impl Lockfile {
     /// # Errors
     ///
     /// - [`Error::Io`] if the lock file cannot be created or opened.
-    /// - [`Error::Lock`] if another process already holds the lock.
+    /// - [`Error::LockContended`] if another process already holds the lock.
+    /// - [`Error::Lock`] if the operating system cannot acquire the lock.
     pub fn try_acquire(&self) -> Result<LockGuard> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -104,12 +105,8 @@ impl Lockfile {
             .truncate(false)
             .open(&self.path)?;
 
-        file.try_lock().map_err(|e| {
-            Error::Lock(std::io::Error::new(
-                std::io::Error::from(e).kind(),
-                format!("another instance holds the lock: {}", self.path.display()),
-            ))
-        })?;
+        file.try_lock()
+            .map_err(|error| map_lock_error(error, &self.path))?;
 
         tracing::debug!(path = %self.path.display(), "lock acquired");
 
@@ -117,6 +114,15 @@ impl Lockfile {
             _file: file,
             path: self.path.clone(),
         })
+    }
+}
+
+fn map_lock_error(error: TryLockError, path: &Path) -> Error {
+    match error {
+        TryLockError::WouldBlock => Error::LockContended {
+            path: path.to_owned(),
+        },
+        TryLockError::Error(source) => Error::Lock(source),
     }
 }
 
@@ -143,5 +149,27 @@ impl LockGuard {
 impl Drop for LockGuard {
     fn drop(&mut self) {
         tracing::debug!(path = %self.path.display(), "lock released");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn genuine_lock_errors_preserve_the_io_failure() {
+        let error = std::io::Error::new(ErrorKind::PermissionDenied, "locking unavailable");
+
+        let mapped = map_lock_error(
+            std::fs::TryLockError::Error(error),
+            Path::new("/tmp/example.lock"),
+        );
+
+        let Error::Lock(source) = mapped else {
+            panic!("expected Error::Lock, got: {mapped:?}");
+        };
+        assert_eq!(source.kind(), ErrorKind::PermissionDenied);
+        assert_eq!(source.to_string(), "locking unavailable");
     }
 }

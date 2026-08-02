@@ -42,10 +42,10 @@ fn second_acquire_fails_while_held() {
     let err = lock2
         .try_acquire()
         .expect_err("should fail while lock is held");
-    assert!(
-        matches!(err, librebar::Error::Lock(_)),
-        "expected Error::Lock, got: {err:?}"
-    );
+    let librebar::Error::LockContended { path } = err else {
+        panic!("expected Error::LockContended, got: {err:?}");
+    };
+    assert_eq!(path, lock2.path());
 }
 
 #[test]

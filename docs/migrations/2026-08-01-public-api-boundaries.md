@@ -112,6 +112,29 @@ programmatic override, and `source` contains the concrete deserializer error.
 Successful loads expose the same provenance through
 `ConfigSources::origin("database.pool_size")`.
 
+## Distinguish lock contention from lock failures
+
+`Lockfile::try_acquire` now returns `Error::LockContended { path }` only when
+another process holds the lock. Match that variant when the application can
+skip, retry, or report an already-running instance:
+
+```rust
+# fn acquire(lock: &librebar::lockfile::Lockfile) -> librebar::Result<()> {
+match lock.try_acquire() {
+    Ok(_guard) => Ok(()),
+    Err(librebar::Error::LockContended { path }) => {
+        eprintln!("already running: {}", path.display());
+        Ok(())
+    }
+    Err(error) => Err(error),
+}
+# }
+```
+
+`Error::Lock` now means the operating system rejected the lock operation for
+another reason. Its nested `std::io::Error` preserves the original kind and
+message through `std::error::Error::source()`.
+
 ## Replace growable struct literals
 
 Librebar's growable public records are now `#[non_exhaustive]`. Read and mutate

@@ -119,6 +119,14 @@ pub enum Error {
     #[error("no active Tokio runtime: {0}")]
     NoRuntime(#[source] BoxError),
 
+    /// Another process already holds the requested lockfile.
+    #[cfg(feature = "lockfile")]
+    #[error("another instance holds the lock: {}", .path.display())]
+    LockContended {
+        /// Path to the contended lockfile.
+        path: std::path::PathBuf,
+    },
+
     /// Lockfile acquisition failed.
     #[cfg(feature = "lockfile")]
     #[error("failed to acquire lock: {0}")]
