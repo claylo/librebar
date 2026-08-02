@@ -32,10 +32,24 @@ pub fn subcommand_binary(app_name: &str, subcommand: &str) -> String {
 
 /// Resolve the full path to a subcommand binary on PATH.
 ///
-/// Returns `None` if the binary is not found.
+/// Empty and relative PATH entries are ignored so dispatch never resolves a
+/// plugin from the process working directory. Returns `None` if the binary is
+/// not found on an absolute PATH entry.
 pub fn resolve(app_name: &str, subcommand: &str) -> Option<PathBuf> {
     let binary = subcommand_binary(app_name, subcommand);
-    which::which(&binary).ok()
+    let path = std::env::var_os("PATH")?;
+    let absolute_paths: Vec<_> = std::env::split_paths(&path)
+        .filter(|entry| entry.is_absolute())
+        .collect();
+    if absolute_paths.is_empty() {
+        return None;
+    }
+
+    let path = std::env::join_paths(absolute_paths).ok()?;
+    let cwd = std::env::current_dir().ok()?;
+    which::which_in(&binary, Some(path), cwd)
+        .ok()
+        .filter(|resolved| resolved.is_absolute())
 }
 
 /// Run an external subcommand, passing through arguments.
