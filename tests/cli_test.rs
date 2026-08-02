@@ -553,6 +553,40 @@ fn schema_merges_explicit_application_metadata() {
 }
 
 #[test]
+fn schema_document_round_trips_through_json() {
+    let metadata = librebar::cli::SchemaMetadata::new()
+        .command(
+            "widget list",
+            librebar::cli::CommandMetadata::new()
+                .mutating(false)
+                .stability(librebar::cli::Stability::Stable)
+                .output_field(
+                    librebar::cli::OutputField::new("id", "string")
+                        .description("Stable widget identifier"),
+                )
+                .example(
+                    librebar::cli::CommandExample::new(["--all"]).stdin("include archived widgets"),
+                ),
+        )
+        .error(
+            librebar::cli::ErrorMetadata::new("not_found")
+                .exit_code(4)
+                .retryable(false)
+                .description("Widget does not exist"),
+        )
+        .outcome(
+            librebar::cli::OutcomeMetadata::new(3, "partial")
+                .description("Some widgets were unavailable"),
+        );
+
+    let document = librebar::cli::schema_for::<SchemaCli>(&metadata).unwrap();
+    let json = serde_json::to_string(&document).unwrap();
+    let restored: librebar::cli::SchemaDocument = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored, document);
+}
+
+#[test]
 fn schema_rejects_unknown_metadata_command_paths() {
     let metadata = librebar::cli::SchemaMetadata::new().command(
         "widget typo",

@@ -1,7 +1,7 @@
 //! CLI Spec v0.2 generation from Clap's built command model.
 
 use clap::{Arg, ArgAction, Command, CommandFactory, ValueHint};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,11 +11,11 @@ use std::path::PathBuf;
 pub const CLI_SPEC_VERSION: &str = "0.2";
 
 /// A complete CLI Spec v0.2 document.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct SchemaDocument {
     /// CLI Spec schema version.
-    pub clispec: &'static str,
+    pub clispec: String,
     /// Binary invocation name.
     pub name: String,
     /// Application version.
@@ -24,32 +24,32 @@ pub struct SchemaDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Arguments accepted throughout the command tree.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub global_args: Vec<ArgumentSchema>,
     /// Flattened command paths.
     pub commands: Vec<CommandSchema>,
     /// Declared structured error kinds.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ErrorMetadata>,
     /// Declared non-error exit outcomes.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<OutcomeMetadata>,
     /// Default unflagged output behavior.
     pub output: OutputBehavior,
 }
 
 /// Default output behavior advertised in a schema document.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct OutputBehavior {
     /// Format selected on a terminal.
-    pub tty: &'static str,
+    pub tty: String,
     /// Format selected when stdout is redirected.
-    pub piped: &'static str,
+    pub piped: String,
 }
 
 /// A command entry generated from Clap and enriched by application metadata.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct CommandSchema {
     /// Full space-separated command path.
@@ -64,27 +64,27 @@ pub struct CommandSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stability: Option<Stability>,
     /// Non-global command arguments.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<ArgumentSchema>,
     /// Structured output fields supplied by the application.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_fields: Vec<OutputField>,
     /// Self-contained example supplied by the application.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub example: Option<CommandExample>,
     /// Command aliases accepted by Clap.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
     /// Whether Clap hides this command from help.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
     /// Argument groups declared on this command.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arg_groups: Vec<ArgumentGroupSchema>,
 }
 
 /// Invocation metadata for one Clap argument.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct ArgumentSchema {
     /// Flag spelling or positional identifier.
@@ -98,17 +98,17 @@ pub struct ArgumentSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
     /// Enumerated accepted values.
-    #[serde(rename = "enum", skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, rename = "enum", skip_serializing_if = "Vec::is_empty")]
     pub possible_values: Vec<String>,
     /// Clap help text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Additional accepted flag spellings.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
     /// Shell-completion value hint.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub value_hint: Option<&'static str>,
+    pub value_hint: Option<String>,
     /// Minimum values accepted per occurrence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_values: Option<usize>,
@@ -116,15 +116,15 @@ pub struct ArgumentSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_values: Option<usize>,
     /// Other arguments Clap reports as conflicts.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conflicts_with: Vec<String>,
     /// Whether Clap hides this argument from help.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
 }
 
 /// A reflected Clap argument group.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct ArgumentGroupSchema {
     /// Group identifier.
@@ -136,7 +136,7 @@ pub struct ArgumentGroupSchema {
 }
 
 /// Stability declared for an application command contract.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stability {
     /// Stable public contract.
@@ -163,7 +163,7 @@ pub enum Stability {
 ///     description: None,
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct OutputField {
     /// Stable field name.
@@ -195,7 +195,7 @@ impl OutputField {
 }
 
 /// A self-contained command invocation used by compliance tooling.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct CommandExample {
     /// Arguments after the command path.
@@ -227,7 +227,7 @@ impl CommandExample {
 }
 
 /// Structured error kind supplied by the application.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct ErrorMetadata {
     /// Stable machine-readable error kind.
@@ -277,7 +277,7 @@ impl ErrorMetadata {
 }
 
 /// A documented non-zero exit that represents data rather than failure.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct OutcomeMetadata {
     /// Process exit code.
@@ -473,7 +473,7 @@ pub(super) fn schema_from_command(
     filter_commands(&mut commands, filter)?;
 
     Ok(SchemaDocument {
-        clispec: CLI_SPEC_VERSION,
+        clispec: CLI_SPEC_VERSION.to_owned(),
         name,
         version,
         description,
@@ -482,8 +482,8 @@ pub(super) fn schema_from_command(
         errors: metadata.errors.clone(),
         outcomes: metadata.outcomes.clone(),
         output: OutputBehavior {
-            tty: "text",
-            piped: "json",
+            tty: "text".to_owned(),
+            piped: "json".to_owned(),
         },
     })
 }
@@ -654,7 +654,7 @@ fn argument_schema(command: &Command, arg: &Arg) -> ArgumentSchema {
             .collect(),
         description: arg.get_help().map(ToString::to_string),
         aliases: argument_aliases(arg),
-        value_hint: value_hint_name(arg.get_value_hint()),
+        value_hint: value_hint_name(arg.get_value_hint()).map(str::to_owned),
         min_values,
         max_values,
         conflicts_with,

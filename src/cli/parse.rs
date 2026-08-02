@@ -19,7 +19,7 @@ pub enum ParseOutcome<T> {
     /// Arguments belong to the application; continue normal startup.
     Run(T),
     /// Librebar handled `schema` before application startup.
-    Schema(SchemaDocument),
+    Schema(Box<SchemaDocument>),
     /// Librebar generated a shell completion script before application startup.
     Completions(Vec<u8>),
 }
@@ -90,7 +90,7 @@ where
             );
         let document = schema_from_command(root.clone(), &metadata, &filter)
             .map_err(|error| root.error(ErrorKind::InvalidValue, error.to_string()))?;
-        return Ok(ParseOutcome::Schema(document));
+        return Ok(ParseOutcome::Schema(Box::new(document)));
     }
 
     if let Some(completion_matches) = matches.subcommand_matches(COMPLETIONS_COMMAND) {

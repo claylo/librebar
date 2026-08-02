@@ -164,6 +164,33 @@ runner.add(ConfigCheck);
 Remove the old `Box::new(...)` wrapper. `DoctorCheck` also no longer requires
 `Send`, so sequential checks may hold thread-local state such as `Rc`.
 
+## Read and compare CLI schema documents
+
+The CLI schema document tree now implements `Deserialize`, `PartialEq`, and
+`Eq`. Tools can deserialize a committed schema into `SchemaDocument` and
+compare it directly with the current output.
+
+The borrowed wire fields are now owned strings so deserialized documents own
+their JSON data. Update explicit field type annotations as follows:
+
+```rust
+// Before
+let version: &'static str = document.clispec;
+let hint: Option<&'static str> = argument.value_hint;
+
+// After
+let version: &str = &document.clispec;
+let hint: Option<&str> = argument.value_hint.as_deref();
+```
+
+The same `String` change applies to `OutputBehavior::tty` and
+`OutputBehavior::piped`. Normal string comparisons and field access remain
+unchanged.
+
+`ParseOutcome::Schema` now contains `Box<SchemaDocument>` to keep the generic
+parse result compact. Pattern matching and field access continue to dereference
+automatically; use `*document` when ownership of the document itself is needed.
+
 ## Update release checks
 
 Replace the old `UpdateChecker::new(app, version, "owner/repo")` call with the

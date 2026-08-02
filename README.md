@@ -277,6 +277,23 @@ incomplete contract. The root Clap command should use `#[command(version)]`;
 alternatively, provide the application version through
 `SchemaMetadata::version`.
 
+Generated schema documents implement Serde deserialization and equality, so
+tools can read a committed contract and compare it with the current command
+tree without maintaining parallel wire structs:
+
+```rust,no_run
+# fn matches_committed(
+#     json: &str,
+#     generated: &librebar::cli::SchemaDocument,
+# ) -> serde_json::Result<bool> {
+let committed: librebar::cli::SchemaDocument = serde_json::from_str(json)?;
+Ok(&committed == generated)
+# }
+```
+
+Unknown JSON fields are ignored when reading newer documents, while fields
+Librebar omits when empty or false regain those default values on readback.
+
 This is a compliance-capable foundation, not an automatic compliance claim.
 Applications still have to honor the selected format, emit declared structured
 errors, keep data on stdout and diagnostics on stderr, and satisfy the CLI
