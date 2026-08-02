@@ -194,11 +194,10 @@ missing_docs = "warn"
 all = "warn"
 nursery = "warn"
 
-# Optimize dependencies in dev mode for faster tests
-# (keeps main crate unoptimized for fast incremental builds)
+# Local workspace profiles only; downstream consumers control their own profiles.
+# Drop dependency debug info to keep local build artifacts small.
 [profile.dev.package."*"]
 debug = 0
-opt-level = 1
 
 [profile.dev.build-override]
 debug = 0
@@ -211,12 +210,10 @@ debug = "line-tables-only"
 opt-level = 1
 # On macOS, keep debug info from exploding into huge scattered dSYM trees
 split-debuginfo = "packed"
-codegen-units = 256
 
 # Test profile with full debug symbols for profiling
 [profile.test]
 inherits = "dev"
-codegen-units = 256
 debug = true
 
 # Release profile with reduced debug info
