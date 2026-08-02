@@ -46,6 +46,19 @@ pub enum Error {
     #[error("failed to deserialize config: {0}")]
     ConfigDeserialize(#[source] BoxError),
 
+    /// A merged configuration value could not be deserialized.
+    #[cfg(feature = "config")]
+    #[error("invalid configuration at {path} from {origin}")]
+    ConfigValue {
+        /// Serde path to the invalid value.
+        path: String,
+        /// Highest-precedence source that supplied the value.
+        origin: crate::config::ConfigOrigin,
+        /// Underlying deserialization error.
+        #[source]
+        source: BoxError,
+    },
+
     /// Config nesting exceeded the maximum depth during merge.
     #[cfg(feature = "config")]
     #[error("config nesting exceeds maximum merge depth")]
@@ -60,6 +73,11 @@ pub enum Error {
         /// Safe diagnostic that never includes the variable's value.
         reason: String,
     },
+
+    /// The configured environment source could not be queried.
+    #[cfg(feature = "config")]
+    #[error("configuration environment source failed")]
+    ConfigEnvironmentSource(#[source] BoxError),
 
     /// A programmatic configuration override is invalid.
     #[cfg(feature = "config")]

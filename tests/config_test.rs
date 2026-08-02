@@ -1,10 +1,14 @@
 #![allow(missing_docs)]
 #![cfg(feature = "config")]
 
+use std::error::Error as _;
 use std::ffi::OsString;
 use std::fs;
+use std::io;
+use std::sync::{Arc, Mutex};
 
 use librebar::config::serde_json::{self, json};
+use librebar::error::BoxError;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
@@ -148,8 +152,35 @@ impl FixedEnvironment {
 }
 
 impl librebar::config::EnvironmentSource for FixedEnvironment {
-    fn vars(&self) -> Vec<(OsString, OsString)> {
-        self.0.clone()
+    fn vars(&self, prefix: &str) -> Result<Vec<(OsString, OsString)>, BoxError> {
+        Ok(self
+            .0
+            .iter()
+            .filter(|(key, _)| key.to_str().is_some_and(|key| key.starts_with(prefix)))
+            .cloned()
+            .collect())
+    }
+}
+
+struct CapturingEnvironment {
+    requested_prefix: Arc<Mutex<Option<String>>>,
+}
+
+impl librebar::config::EnvironmentSource for CapturingEnvironment {
+    fn vars(&self, prefix: &str) -> Result<Vec<(OsString, OsString)>, BoxError> {
+        *self.requested_prefix.lock().unwrap() = Some(prefix.to_string());
+        Ok(vec![(
+            OsString::from(format!("{prefix}PORT")),
+            OsString::from("9000"),
+        )])
+    }
+}
+
+struct FailingEnvironment;
+
+impl librebar::config::EnvironmentSource for FailingEnvironment {
+    fn vars(&self, _prefix: &str) -> Result<Vec<(OsString, OsString)>, BoxError> {
+        Err(Box::new(io::Error::other("parameter store unavailable")))
     }
 }
 
@@ -202,6 +233,38 @@ fn loader_with(values: &[(&str, &str)]) -> librebar::config::ConfigLoader {
         .with_user_config(false)
         .without_boundary_marker()
         .with_environment_source(FixedEnvironment::new(values))
+}
+
+#[test]
+fn custom_environment_source_receives_the_normalized_prefix_without_debug() {
+    let requested_prefix = Arc::new(Mutex::new(None));
+    let loader = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(CapturingEnvironment {
+            requested_prefix: Arc::clone(&requested_prefix),
+        });
+
+    let debug = format!("{loader:?}");
+    assert!(debug.contains("<environment source>"));
+
+    let (config, _): (EnvironmentConfig, _) = loader.load().unwrap();
+    assert_eq!(config.port, 9000);
+    assert_eq!(requested_prefix.lock().unwrap().as_deref(), Some("MY_APP_"));
+}
+
+#[test]
+fn environment_source_failures_preserve_the_nested_error() {
+    let error = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(FailingEnvironment)
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "configuration environment source failed");
+    assert_eq!(
+        error.source().unwrap().to_string(),
+        "parameter store unavailable"
+    );
 }
 
 #[test]
@@ -331,7 +394,14 @@ fn unknown_prefixed_variables_can_be_collected() {
         .with_unknown_environment(librebar::config::UnknownEnvironment::Collect)
         .load::<StrictEnvironmentConfig>()
         .unwrap_err();
-    assert!(matches!(err, librebar::Error::ConfigDeserialize(_)));
+    assert!(matches!(
+        err,
+        librebar::Error::ConfigValue {
+            path,
+            origin: librebar::config::ConfigOrigin::Environment { variable },
+            ..
+        } if path == "typo_field" && variable == "MY_APP_TYPO_FIELD"
+    ));
 }
 
 #[cfg(unix)]
@@ -633,6 +703,127 @@ fn programmatic_override_beats_explicit_file() {
 
     assert_eq!(config.port, 9000);
     assert_eq!(sources.override_paths, ["port".to_string()]);
+}
+
+#[test]
+fn config_sources_reports_the_winning_origin_for_each_path() {
+    use librebar::config::ConfigOrigin;
+
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("config.toml");
+    fs::write(&file, "port = 7000\nratio = 2.0\n").unwrap();
+    let file = camino::Utf8PathBuf::try_from(file).unwrap();
+
+    let (_, sources): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_file(&file)
+        .with_environment_source(FixedEnvironment::new(&[
+            ("MY_APP_PORT", "8000"),
+            ("MY_APP_ENABLED", "true"),
+        ]))
+        .with_override("port", 9000_u16)
+        .load()
+        .unwrap();
+
+    assert_eq!(
+        sources.origin("port"),
+        Some(&ConfigOrigin::Override {
+            path: "port".to_string(),
+        })
+    );
+    assert_eq!(
+        sources.origin("ratio"),
+        Some(&ConfigOrigin::ExplicitFile { path: file })
+    );
+    assert_eq!(
+        sources.origin("enabled"),
+        Some(&ConfigOrigin::Environment {
+            variable: "MY_APP_ENABLED".to_string(),
+        })
+    );
+    assert_eq!(sources.origin("database.url"), Some(&ConfigOrigin::Default));
+}
+
+#[test]
+fn config_sources_discards_origins_for_values_replaced_by_an_override() {
+    use librebar::config::ConfigOrigin;
+
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("config.toml");
+    fs::write(&file, "[metadata]\nold = 1\n").unwrap();
+    let file = camino::Utf8PathBuf::try_from(file).unwrap();
+
+    let (config, sources): (EnvironmentConfig, _) = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_file(file)
+        .without_environment()
+        .with_override("metadata", "replacement")
+        .load()
+        .unwrap();
+
+    assert_eq!(config.metadata, "replacement");
+    assert_eq!(
+        sources.origin("metadata.old"),
+        Some(&ConfigOrigin::Override {
+            path: "metadata".to_string(),
+        })
+    );
+}
+
+#[test]
+fn deserialization_error_identifies_the_winning_file_and_path() {
+    use librebar::config::ConfigOrigin;
+
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("config.toml");
+    fs::write(&file, "database = \"not-an-object\"\n").unwrap();
+    let file = camino::Utf8PathBuf::try_from(file).unwrap();
+
+    let error = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_file(&file)
+        .with_environment_source(FixedEnvironment::new(&[(
+            "MY_APP_DATABASE__URL",
+            "postgres://environment",
+        )]))
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+
+    let librebar::Error::ConfigValue {
+        path,
+        origin,
+        source: _,
+    } = &error
+    else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(path, "database");
+    assert_eq!(origin, &ConfigOrigin::ExplicitFile { path: file });
+    assert!(error.source().unwrap().is::<serde_json::Error>());
+}
+
+#[test]
+fn deserialization_error_identifies_the_winning_override() {
+    use librebar::config::ConfigOrigin;
+
+    let error = librebar::config::ConfigLoader::new("my-app")
+        .with_user_config(false)
+        .with_environment_source(FixedEnvironment::new(&[("MY_APP_RATIO", "2.0")]))
+        .with_override("ratio", "not-a-number")
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+
+    let librebar::Error::ConfigValue { path, origin, .. } = &error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(path, "ratio");
+    assert_eq!(
+        origin,
+        &ConfigOrigin::Override {
+            path: "ratio".to_string(),
+        }
+    );
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 }
 
 #[test]

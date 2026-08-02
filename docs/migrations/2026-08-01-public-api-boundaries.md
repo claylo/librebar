@@ -13,6 +13,35 @@ use librebar::mcp::rmcp;
 These paths use the same crate versions as Librebar. Keep a direct dependency
 when your app also uses that crate on its own.
 
+## Update environment config sources
+
+Custom `EnvironmentSource` implementations now receive Librebar's normalized
+application prefix and may fail while querying their backing store. They no
+longer need to implement `Debug`:
+
+```rust
+use std::ffi::OsString;
+
+use librebar::config::EnvironmentSource;
+use librebar::error::BoxError;
+
+struct ParameterStore;
+
+impl EnvironmentSource for ParameterStore {
+    fn vars(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(OsString, OsString)>, BoxError> {
+        let _ = prefix; // For example: MY_APP_
+        Ok(Vec::new())
+    }
+}
+```
+
+Use the prefix to avoid querying or returning unrelated values. Return the
+backing error directly; Librebar wraps it as `Error::ConfigEnvironmentSource`
+and preserves it through `std::error::Error::source()`.
+
 ## Update MCP stdio setup
 
 Pass the stdio value straight to RMCP:
@@ -75,6 +104,13 @@ librebar::Error::ConfigDeserialize(Box::new(json_error))
 Every wrapped error is also available through `std::error::Error::source()`.
 Walking that chain reaches nested sources in the same order they were reported
 by the dependency.
+
+Final deserialization of layered configuration now reports
+`Error::ConfigValue { path, origin, source }`. The path identifies the failing
+Serde field, `origin` names the winning default, file, environment variable, or
+programmatic override, and `source` contains the concrete deserializer error.
+Successful loads expose the same provenance through
+`ConfigSources::origin("database.pool_size")`.
 
 ## Replace growable struct literals
 

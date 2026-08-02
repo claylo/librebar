@@ -34,6 +34,8 @@
 //! Search stops at a `.git` boundary by default (configurable via
 //! [`ConfigLoader::with_boundary_marker()`]).
 
+use std::collections::BTreeMap;
+
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,10 +85,92 @@ impl LogLevel {
 
 // ─── ConfigSources ──────────────────────────────────────────────────
 
+/// The winning source for a merged configuration value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum ConfigOrigin {
+    /// Value came from the consumer config type's default.
+    Default,
+    /// Value came from a preloaded consumer configuration.
+    Preloaded,
+    /// Value came from the user config file.
+    UserFile {
+        /// Loaded file path.
+        path: Utf8PathBuf,
+    },
+    /// Value came from the discovered project config file.
+    ProjectFile {
+        /// Loaded file path.
+        path: Utf8PathBuf,
+    },
+    /// Value came from an environment variable.
+    Environment {
+        /// Environment variable name. Its value is never retained.
+        variable: String,
+    },
+    /// Value came from an explicitly selected config file.
+    ExplicitFile {
+        /// Loaded file path.
+        path: Utf8PathBuf,
+    },
+    /// Value came from a programmatic override.
+    Override {
+        /// Dotted override path.
+        path: String,
+    },
+}
+
+impl std::fmt::Display for ConfigOrigin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Default => formatter.write_str("defaults"),
+            Self::Preloaded => formatter.write_str("preloaded configuration"),
+            Self::UserFile { path } => write!(formatter, "user config file {path}"),
+            Self::ProjectFile { path } => write!(formatter, "project config file {path}"),
+            Self::Environment { variable } => {
+                write!(formatter, "environment variable {variable}")
+            }
+            Self::ExplicitFile { path } => write!(formatter, "explicit config file {path}"),
+            Self::Override { path } => write!(formatter, "programmatic override {path}"),
+        }
+    }
+}
+
+pub(crate) type OriginMap = BTreeMap<String, ConfigOrigin>;
+
+pub(super) fn record_origins(
+    origins: &mut OriginMap,
+    path: &str,
+    value: &Value,
+    origin: ConfigOrigin,
+) {
+    origins.insert(path.to_string(), origin.clone());
+    match value {
+        Value::Object(values) => {
+            for (key, value) in values {
+                let child = if path == "$" {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                record_origins(origins, &child, value, origin.clone());
+            }
+        }
+        Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                record_origins(origins, &format!("{path}[{index}]"), value, origin.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Metadata about which configuration sources were loaded.
 ///
 /// Returned alongside the config from [`ConfigLoader::load()`] so commands
-/// like `doctor` and `info` can report the actual config files.
+/// like `doctor` and `info` can report loaded files and the winning source for
+/// each merged value.
 #[derive(Debug, Clone, Default, Serialize)]
 #[non_exhaustive]
 pub struct ConfigSources {
@@ -105,6 +189,9 @@ pub struct ConfigSources {
     /// Applied programmatic override paths.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub override_paths: Vec<String>,
+    /// Winning source for each merged configuration path.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub value_origins: BTreeMap<String, ConfigOrigin>,
 }
 
 impl ConfigSources {
@@ -119,6 +206,43 @@ impl ConfigSources {
             .or(self.user_file.as_deref())
     }
 
+    /// Return the winning source for a merged configuration path.
+    ///
+    /// Paths use Serde's dotted field notation, such as `database.url`.
+    pub fn origin(&self, path: &str) -> Option<&ConfigOrigin> {
+        let mut candidate = if path.is_empty() || path == "." {
+            "$"
+        } else {
+            path
+        };
+        loop {
+            if let Some(origin) = self.value_origins.get(candidate) {
+                return Some(origin);
+            }
+            let parent = parent_config_path(candidate)?;
+            candidate = parent;
+        }
+    }
+
+    pub(crate) fn record_layer(&mut self, value: &Value, origin: ConfigOrigin) {
+        record_origins(&mut self.value_origins, "$", value, origin);
+    }
+
+    pub(crate) fn record_merge(&mut self, base: &Value, overlay: &Value, origin: ConfigOrigin) {
+        let mut origins = OriginMap::new();
+        record_origins(&mut origins, "$", overlay, origin);
+        self.record_merge_origins(base, overlay, &origins);
+    }
+
+    pub(crate) fn record_merge_origins(
+        &mut self,
+        base: &Value,
+        overlay: &Value,
+        origins: &OriginMap,
+    ) {
+        merge_origins(&mut self.value_origins, Some(base), overlay, origins, "$");
+    }
+
     const fn is_empty(&self) -> bool {
         self.project_file.is_none()
             && self.user_file.is_none()
@@ -126,6 +250,71 @@ impl ConfigSources {
             && self.environment_variables.is_empty()
             && self.override_paths.is_empty()
     }
+}
+
+fn merge_origins(
+    current: &mut OriginMap,
+    base: Option<&Value>,
+    overlay: &Value,
+    incoming: &OriginMap,
+    path: &str,
+) {
+    if let (Some(Value::Object(base)), Value::Object(overlay)) = (base, overlay) {
+        if let Some(origin) = incoming.get(path) {
+            current.insert(path.to_string(), origin.clone());
+        }
+        for (key, value) in overlay {
+            let child = if path == "$" {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            merge_origins(current, base.get(key), value, incoming, &child);
+        }
+        return;
+    }
+
+    let replacement_origin = incoming
+        .get(path)
+        .or_else(|| {
+            incoming
+                .iter()
+                .find(|(candidate, _)| is_config_descendant(path, candidate))
+                .map(|(_, origin)| origin)
+        })
+        .cloned();
+    current.retain(|candidate, _| !is_config_descendant(path, candidate));
+    current.extend(
+        incoming
+            .iter()
+            .filter(|(candidate, _)| is_config_descendant(path, candidate))
+            .map(|(path, origin)| (path.clone(), origin.clone())),
+    );
+    if !current.contains_key(path)
+        && let Some(origin) = replacement_origin
+    {
+        current.insert(path.to_string(), origin);
+    }
+}
+
+fn is_config_descendant(path: &str, candidate: &str) -> bool {
+    path == "$"
+        || candidate == path
+        || candidate
+            .strip_prefix(path)
+            .is_some_and(|suffix| suffix.starts_with('.') || suffix.starts_with('['))
+}
+
+fn parent_config_path(path: &str) -> Option<&str> {
+    if path == "$" {
+        return None;
+    }
+    if path.ends_with(']')
+        && let Some(index) = path.rfind('[')
+    {
+        return Some(if index == 0 { "$" } else { &path[..index] });
+    }
+    Some(path.rsplit_once('.').map_or("$", |(parent, _)| parent))
 }
 
 /// A serialized programmatic configuration override.
@@ -254,7 +443,6 @@ pub fn parse_file(path: &Utf8Path) -> Result<Value> {
 /// Discovers config files by walking up directories, loads user config
 /// from XDG directories, merges all sources, and deserializes into the
 /// consumer's config type.
-#[derive(Debug)]
 pub struct ConfigLoader {
     app_name: String,
     project_search_root: Option<Utf8PathBuf>,
@@ -264,6 +452,28 @@ pub struct ConfigLoader {
     environment_source: Option<std::sync::Arc<dyn EnvironmentSource>>,
     unknown_environment: UnknownEnvironment,
     overrides: Vec<ConfigOverride>,
+}
+
+impl std::fmt::Debug for ConfigLoader {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConfigLoader")
+            .field("app_name", &self.app_name)
+            .field("project_search_root", &self.project_search_root)
+            .field("include_user_config", &self.include_user_config)
+            .field("boundary_marker", &self.boundary_marker)
+            .field("explicit_files", &self.explicit_files)
+            .field(
+                "environment_source",
+                &self
+                    .environment_source
+                    .as_ref()
+                    .map(|_| "<environment source>"),
+            )
+            .field("unknown_environment", &self.unknown_environment)
+            .field("overrides", &self.overrides)
+            .finish()
+    }
 }
 
 impl Default for ConfigLoader {
@@ -359,13 +569,13 @@ impl ConfigLoader {
 
     /// Load configuration, merging all discovered sources.
     ///
-    /// Returns the merged config alongside metadata about which files
-    /// were loaded.
+    /// Returns the merged config alongside source and value-origin metadata.
     ///
     /// # Errors
     ///
-    /// Returns an error if an explicit file cannot be read or parsed,
-    /// or if the merged result cannot be deserialized into `C`.
+    /// Returns an error if an explicit file cannot be read or parsed, an
+    /// environment source cannot be queried, or the merged result cannot be
+    /// deserialized into `C`.
     #[tracing::instrument(skip(self), fields(app = %self.app_name, search_root = ?self.project_search_root))]
     pub fn load<C: serde::de::DeserializeOwned + Default + Serialize>(
         self,
@@ -381,6 +591,7 @@ impl ConfigLoader {
         let mut merged = serde_json::to_value(C::default())
             .map_err(|error| Error::ConfigDeserialize(boxed_error(error)))?;
         let mut sources = ConfigSources::default();
+        sources.record_layer(&merged, ConfigOrigin::Default);
 
         // User config (lowest precedence of file sources)
         if self.include_user_config
@@ -388,6 +599,13 @@ impl ConfigLoader {
         {
             tracing::debug!(path = %user_config, "discovered user config");
             let value = parse_file(&user_config)?;
+            sources.record_merge(
+                &merged,
+                &value,
+                ConfigOrigin::UserFile {
+                    path: user_config.clone(),
+                },
+            );
             deep_merge(&mut merged, value)?;
             sources.user_file = Some(user_config);
         }
@@ -398,6 +616,13 @@ impl ConfigLoader {
         {
             tracing::debug!(path = %project_config, "discovered project config");
             let value = parse_file(&project_config)?;
+            sources.record_merge(
+                &merged,
+                &value,
+                ConfigOrigin::ProjectFile {
+                    path: project_config.clone(),
+                },
+            );
             deep_merge(&mut merged, value)?;
             sources.project_file = Some(project_config);
         }
@@ -405,8 +630,9 @@ impl ConfigLoader {
         // Environment overrides discovered config, but not an explicitly
         // selected file.
         if let Some(source) = self.environment_source.as_deref() {
-            let (overlay, variables) =
+            let (overlay, variables, origins) =
                 environment::overlay(&self.app_name, &merged, source, self.unknown_environment)?;
+            sources.record_merge_origins(&merged, &overlay, &origins);
             deep_merge(&mut merged, overlay)?;
             sources.environment_variables = variables;
         }
@@ -416,18 +642,22 @@ impl ConfigLoader {
         for file in &self.explicit_files {
             tracing::debug!(path = %file, "loading explicit config");
             let value = parse_file(file)?;
+            sources.record_merge(
+                &merged,
+                &value,
+                ConfigOrigin::ExplicitFile { path: file.clone() },
+            );
             deep_merge(&mut merged, value)?;
         }
         sources.explicit_files = self.explicit_files;
 
-        sources.override_paths = apply_config_overrides(&mut merged, self.overrides)?;
+        sources.override_paths = apply_config_overrides(&mut merged, self.overrides, &mut sources)?;
 
         if require_source && sources.is_empty() {
             return Err(Error::ConfigNotFound);
         }
 
-        let config: C = serde_json::from_value(merged)
-            .map_err(|error| Error::ConfigDeserialize(boxed_error(error)))?;
+        let config = deserialize_config(merged, &sources)?;
         tracing::info!("configuration loaded");
         Ok((config, sources))
     }
@@ -499,9 +729,31 @@ impl ConfigLoader {
     }
 }
 
+pub(crate) fn deserialize_config<C: serde::de::DeserializeOwned>(
+    merged: Value,
+    sources: &ConfigSources,
+) -> Result<C> {
+    serde_path_to_error::deserialize(merged).map_err(|error| {
+        let path = match error.path().to_string().as_str() {
+            "" | "." => "$".to_string(),
+            path => path.to_string(),
+        };
+        let origin = sources
+            .origin(&path)
+            .cloned()
+            .unwrap_or(ConfigOrigin::Default);
+        Error::ConfigValue {
+            path,
+            origin,
+            source: boxed_error(error.into_inner()),
+        }
+    })
+}
+
 pub(crate) fn apply_config_overrides(
     merged: &mut Value,
     overrides: Vec<ConfigOverride>,
+    sources: &mut ConfigSources,
 ) -> Result<Vec<String>> {
     let mut paths = Vec::with_capacity(overrides.len());
     for config_override in overrides {
@@ -511,7 +763,17 @@ pub(crate) fn apply_config_overrides(
             reason: error.to_string(),
         })?;
         let segments = override_path(&path)?;
-        set_path(merged, &segments, value);
+        let mut origins = OriginMap::new();
+        record_origins(
+            &mut origins,
+            &path,
+            &value,
+            ConfigOrigin::Override { path: path.clone() },
+        );
+        let mut overlay = Value::Object(serde_json::Map::new());
+        set_path(&mut overlay, &segments, value);
+        sources.record_merge_origins(merged, &overlay, &origins);
+        deep_merge(merged, overlay)?;
         paths.push(path);
     }
     Ok(paths)

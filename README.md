@@ -460,6 +460,32 @@ let app = librebar::init("myapp")
 Only add overrides for CLI flags the user actually supplied. Typed overrides
 are applied in call order and beat every file and environment variable.
 
+### Source provenance
+
+`ConfigSources` records the winning origin for each merged value without
+retaining environment values or override payloads. Paths use Serde's dotted
+notation:
+
+```rust,no_run
+# #[derive(Default, serde::Deserialize, serde::Serialize)]
+# struct Config {}
+# fn main() -> librebar::Result<()> {
+let (_, sources) = librebar::config::ConfigLoader::new("myapp")
+    .load::<Config>()?;
+
+if let Some(origin) = sources.origin("database.pool_size") {
+    eprintln!("database.pool_size came from {origin}");
+}
+# Ok(())
+# }
+```
+
+If the final merged value cannot be deserialized, Librebar returns
+`Error::ConfigValue` with the failing Serde path, its winning `ConfigOrigin`,
+and the concrete deserializer error preserved as the nested source. This makes
+mixed file, environment, and CLI configuration failures traceable to the layer
+that supplied the bad value.
+
 ### Escape hatch
 
 Skip the builder entirely and use the config module directly:

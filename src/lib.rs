@@ -723,14 +723,11 @@ where
                 let mut merged = serde_json::to_value(config).map_err(|error| {
                     crate::Error::ConfigDeserialize(crate::error::boxed_error(error))
                 })?;
-                let override_paths = config::apply_config_overrides(&mut merged, config_overrides)?;
-                let config = serde_json::from_value(merged).map_err(|error| {
-                    crate::Error::ConfigDeserialize(crate::error::boxed_error(error))
-                })?;
-                let sources = config::ConfigSources {
-                    override_paths,
-                    ..config::ConfigSources::default()
-                };
+                let mut sources = config::ConfigSources::default();
+                sources.record_layer(&merged, config::ConfigOrigin::Preloaded);
+                sources.override_paths =
+                    config::apply_config_overrides(&mut merged, config_overrides, &mut sources)?;
+                let config = config::deserialize_config(merged, &sources)?;
                 (config, sources)
             }
         };

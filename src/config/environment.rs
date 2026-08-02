@@ -2,14 +2,24 @@ use std::ffi::OsString;
 
 use serde_json::{Map, Value};
 
-use crate::Result;
+use crate::config::{ConfigOrigin, OriginMap, record_origins};
+use crate::error::BoxError;
+use crate::{Error, Result};
 
 const ENV_PATH_DEPTH_LIMIT: usize = 64;
 
 /// Source of process-style configuration variables.
-pub trait EnvironmentSource: std::fmt::Debug {
-    /// Return environment key/value pairs.
-    fn vars(&self) -> Vec<(OsString, OsString)>;
+pub trait EnvironmentSource {
+    /// Return environment key/value pairs matching `prefix`.
+    ///
+    /// The prefix is the normalized uppercase application name with a trailing
+    /// underscore, such as `MY_APP_`. Implementations may use it to avoid
+    /// querying or returning unrelated values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backing source cannot be queried.
+    fn vars(&self, prefix: &str) -> std::result::Result<Vec<(OsString, OsString)>, BoxError>;
 }
 
 /// The current process environment.
@@ -17,8 +27,10 @@ pub trait EnvironmentSource: std::fmt::Debug {
 pub struct ProcessEnvironment;
 
 impl EnvironmentSource for ProcessEnvironment {
-    fn vars(&self) -> Vec<(OsString, OsString)> {
-        std::env::vars_os().collect()
+    fn vars(&self, prefix: &str) -> std::result::Result<Vec<(OsString, OsString)>, BoxError> {
+        Ok(std::env::vars_os()
+            .filter(|(key, _)| key.to_str().is_some_and(|key| key.starts_with(prefix)))
+            .collect())
     }
 }
 
@@ -37,13 +49,15 @@ pub(super) fn overlay(
     schema: &Value,
     source: &dyn EnvironmentSource,
     unknown: UnknownEnvironment,
-) -> Result<(Value, Vec<String>)> {
+) -> Result<(Value, Vec<String>, OriginMap)> {
     let prefix = prefix(app_name);
     let mut overlay = Map::new();
     let mut applied = Vec::new();
+    let mut origins = OriginMap::new();
 
     let mut variables: Vec<(String, OsString)> = source
-        .vars()
+        .vars(&prefix)
+        .map_err(Error::ConfigEnvironmentSource)?
         .into_iter()
         .filter_map(|(key, value)| key.into_string().ok().map(|key| (key, value)))
         .filter(|(key, _)| key.starts_with(&prefix))
@@ -60,17 +74,22 @@ pub(super) fn overlay(
         let value = value
             .into_string()
             .map_err(|_| environment_error(&key, "value is not valid UTF-8"))?;
+        let value = coerce(&key, value, value_schema)?;
 
-        insert(
-            &mut overlay,
-            &path,
-            coerce(&key, value, value_schema)?,
-            &key,
-        )?;
+        let config_path = path.join(".");
+        record_origins(
+            &mut origins,
+            &config_path,
+            &value,
+            ConfigOrigin::Environment {
+                variable: key.clone(),
+            },
+        );
+        insert(&mut overlay, &path, value, &key)?;
         applied.push(key);
     }
 
-    Ok((Value::Object(overlay), applied))
+    Ok((Value::Object(overlay), applied, origins))
 }
 
 fn path(variable: &str, prefix: &str) -> Result<Vec<String>> {

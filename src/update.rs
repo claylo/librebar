@@ -22,7 +22,7 @@ use std::time::Duration;
 use crate::error::{BoxError, boxed_error};
 use crate::http::{Bytes, HeaderValue, HttpClient, Method, Request, StatusCode, header};
 
-/// Re-export of [`async_trait`], used to implement [`ReleaseSource`].
+/// Re-export of [`mod@async_trait`], used to implement [`ReleaseSource`].
 pub use async_trait::async_trait;
 
 const CACHE_TTL: Duration = Duration::from_secs(86400); // 24 hours

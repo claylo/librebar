@@ -94,6 +94,8 @@ fn configured_builder_applies_programmatic_override_last() {
 
 #[test]
 fn preloaded_config_accepts_programmatic_override() {
+    use librebar::config::ConfigOrigin;
+
     let config = TestConfig {
         log_level: librebar::config::LogLevel::Info,
         custom: Some("preloaded".to_string()),
@@ -107,6 +109,16 @@ fn preloaded_config_accepts_programmatic_override() {
 
     assert_eq!(app.config().custom.as_deref(), Some("cli"));
     assert_eq!(app.config_sources().override_paths, ["custom"]);
+    assert_eq!(
+        app.config_sources().origin("log_level"),
+        Some(&ConfigOrigin::Preloaded)
+    );
+    assert_eq!(
+        app.config_sources().origin("custom"),
+        Some(&ConfigOrigin::Override {
+            path: "custom".to_string(),
+        })
+    );
 }
 
 #[test]
