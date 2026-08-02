@@ -50,7 +50,7 @@ fn second_acquire_fails_while_held() {
 
 #[test]
 fn lock_dir_default_contains_app_name() {
-    let dir = librebar::lockfile::default_lock_dir("test-app");
+    let dir = librebar::lockfile::default_lock_dir("test-app").unwrap();
     let path = dir.to_string_lossy();
     assert!(
         path.contains("test-app"),

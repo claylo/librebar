@@ -34,14 +34,21 @@ use crate::{Error, Result};
 /// Returns the platform-appropriate directory for lock files.
 ///
 /// - macOS / other: `$TMPDIR/{app_name}/`
-/// - Linux: `$XDG_RUNTIME_DIR/{app_name}/` falling back to `/tmp/{app_name}/`
-pub fn default_lock_dir(app_name: &str) -> PathBuf {
+/// - Linux: `$XDG_RUNTIME_DIR/{app_name}/`, falling back to
+///   `$XDG_STATE_HOME/{app_name}/` or `~/.local/state/{app_name}/`
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] on Linux when no per-user runtime or state directory
+/// can be resolved. Librebar does not fall back to a shared temporary
+/// directory because another local user could pre-create or hold that path.
+pub fn default_lock_dir(app_name: &str) -> Result<PathBuf> {
     #[cfg(target_os = "linux")]
     {
-        let base = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"));
-        base.join(app_name)
+        let base_dirs = directories::BaseDirs::new();
+        let runtime_dir = base_dirs.as_ref().and_then(|dirs| dirs.runtime_dir());
+        let state_dir = base_dirs.as_ref().and_then(|dirs| dirs.state_dir());
+        linux_lock_dir(app_name, runtime_dir, state_dir).map_err(Error::from)
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -49,8 +56,25 @@ pub fn default_lock_dir(app_name: &str) -> PathBuf {
         let base = std::env::var("TMPDIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir());
-        base.join(app_name)
+        Ok(base.join(app_name))
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_lock_dir(
+    app_name: &str,
+    runtime_dir: Option<&Path>,
+    state_dir: Option<&Path>,
+) -> std::io::Result<PathBuf> {
+    runtime_dir
+        .or(state_dir)
+        .map(|base| base.join(app_name))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no per-user runtime or state directory available for lockfile",
+            )
+        })
 }
 
 // ─── Lockfile ────────────────────────────────────────────────────────
@@ -80,9 +104,10 @@ impl Lockfile {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Io`] if the lock directory cannot be created.
+    /// Returns [`Error::Io`] if no secure per-user directory is available or
+    /// if the lock directory cannot be created.
     pub fn default_for(app_name: &str) -> Result<Self> {
-        let dir = default_lock_dir(app_name);
+        let dir = default_lock_dir(app_name)?;
         std::fs::create_dir_all(&dir)?;
         Ok(Self::new(app_name, &dir))
     }
@@ -166,6 +191,22 @@ impl Drop for LockGuard {
 mod tests {
     use super::*;
     use std::io::ErrorKind;
+
+    #[test]
+    fn linux_lock_dir_falls_back_to_per_user_state() {
+        let state = Path::new("/home/test/.local/state");
+
+        let path = linux_lock_dir("test-app", None, Some(state)).unwrap();
+
+        assert_eq!(path, state.join("test-app"));
+    }
+
+    #[test]
+    fn linux_lock_dir_rejects_shared_temporary_fallback() {
+        let error = linux_lock_dir("test-app", None, None).unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
 
     #[test]
     fn genuine_lock_errors_preserve_the_io_failure() {

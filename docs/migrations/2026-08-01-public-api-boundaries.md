@@ -153,6 +153,25 @@ match lock.try_acquire() {
 another reason. Its nested `std::io::Error` preserves the original kind and
 message through `std::error::Error::source()`.
 
+## Handle fallible default lock directories
+
+`lockfile::default_lock_dir` now returns `librebar::Result<PathBuf>`. Direct
+callers must handle the possibility that no secure per-user lock directory is
+available:
+
+```rust
+# fn lock_dir() -> librebar::Result<std::path::PathBuf> {
+let dir = librebar::lockfile::default_lock_dir("my-app")?;
+# Ok(dir)
+# }
+```
+
+On Linux, the resolver uses `XDG_RUNTIME_DIR`, then `XDG_STATE_HOME` or
+`~/.local/state`. It no longer falls back to shared `/tmp`, where another local
+user could pre-create or hold the application lock path. `Lockfile::default_for`
+already propagates this error, so callers using that constructor need no code
+change.
+
 ## Replace growable struct literals
 
 Librebar's growable public records are now `#[non_exhaustive]`. Read and mutate
