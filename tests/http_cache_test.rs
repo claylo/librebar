@@ -388,13 +388,7 @@ async fn corrupt_entry_is_removed_and_refetched() {
     let path = std::fs::read_dir(cache_dir.path())
         .unwrap()
         .filter_map(|entry| entry.ok())
-        .find(|entry| {
-            entry
-                .path()
-                .extension()
-                .and_then(|e| e.to_str())
-                == Some("cache")
-        })
+        .find(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("cache"))
         .unwrap()
         .path();
     std::fs::write(path, b"not an envelope").unwrap();

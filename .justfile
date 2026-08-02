@@ -60,7 +60,9 @@ cov:
   @cargo llvm-cov report --html
   @cargo llvm-cov report --summary-only --json --output-path target/llvm-cov/summary.json
 
-check: fmt-check clippy deny test doc-test doc
+# check reformats (fmt, not fmt-check) — local muscle memory expects
+# `just check` to FIX formatting, not report it. CI runs fmt-check itself.
+check: fmt clippy deny test doc-test doc
 
 # Check for outdated dependencies (root only, no transitive noise)
 outdated:

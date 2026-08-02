@@ -84,10 +84,7 @@ impl ReleaseVersion {
     /// Create a validated release version.
     pub fn new(version: impl Into<String>) -> std::result::Result<Self, ReleaseInfoError> {
         let version = version.into();
-        if version.is_empty()
-            || !version
-                .starts_with(|c: char| c.is_ascii_digit() || c == 'v')
-        {
+        if version.is_empty() || !version.starts_with(|c: char| c.is_ascii_digit() || c == 'v') {
             return Err(ReleaseInfoError::InvalidVersion(version));
         }
         Ok(Self(version))

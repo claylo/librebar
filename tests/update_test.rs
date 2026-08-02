@@ -388,9 +388,13 @@ fn update_info_display_escapes_terminal_controls() {
 #[test]
 fn release_info_try_new_validates_version() {
     assert!(librebar::update::ReleaseInfo::try_new("0.2.0", "https://example.com/release").is_ok());
-    assert!(librebar::update::ReleaseInfo::try_new("v0.2.0", "https://example.com/release").is_ok());
+    assert!(
+        librebar::update::ReleaseInfo::try_new("v0.2.0", "https://example.com/release").is_ok()
+    );
     assert!(librebar::update::ReleaseInfo::try_new("", "https://example.com/release").is_err());
-    assert!(librebar::update::ReleaseInfo::try_new("!invalid", "https://example.com/release").is_err());
+    assert!(
+        librebar::update::ReleaseInfo::try_new("!invalid", "https://example.com/release").is_err()
+    );
 }
 
 #[test]

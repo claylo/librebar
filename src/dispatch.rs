@@ -59,7 +59,10 @@ pub fn subcommand_binary(app_name: &str, subcommand: &str) -> String {
 /// # Errors
 ///
 /// Returns a [`DispatchError`] variant describing why resolution failed.
-pub fn try_resolve(app_name: &str, subcommand: &str) -> std::result::Result<PathBuf, DispatchError> {
+pub fn try_resolve(
+    app_name: &str,
+    subcommand: &str,
+) -> std::result::Result<PathBuf, DispatchError> {
     let binary = subcommand_binary(app_name, subcommand);
     let path = std::env::var_os("PATH").ok_or(DispatchError::PathNotSet)?;
     let absolute_paths: Vec<_> = std::env::split_paths(&path)
@@ -104,9 +107,7 @@ where
     let binary_path = match try_resolve(app_name, subcommand) {
         Ok(path) => path,
         Err(DispatchError::NotFound { .. }) => return Ok(None),
-        Err(error) => {
-            return Err(Error::Dispatch(std::io::Error::other(error)))
-        }
+        Err(error) => return Err(Error::Dispatch(std::io::Error::other(error))),
     };
 
     tracing::debug!(binary = %binary_path.display(), "dispatching to external command");

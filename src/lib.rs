@@ -381,7 +381,11 @@ impl BuilderInner {
         #[cfg(all(feature = "logging", not(feature = "otel")))]
         if log_layer.is_some() {
             let (quiet, verbose) = cli_flags;
-            let filter = logging::env_filter(quiet, verbose, default_log_level.as_deref().unwrap_or("info"));
+            let filter = logging::env_filter(
+                quiet,
+                verbose,
+                default_log_level.as_deref().unwrap_or("info"),
+            );
             tracing_subscriber::registry()
                 .with(filter)
                 .with(log_layer)
@@ -392,7 +396,11 @@ impl BuilderInner {
         #[cfg(all(feature = "logging", feature = "otel"))]
         if log_layer.is_some() || otel_layer.is_some() {
             let (quiet, verbose) = cli_flags;
-            let filter = logging::env_filter(quiet, verbose, default_log_level.as_deref().unwrap_or("info"));
+            let filter = logging::env_filter(
+                quiet,
+                verbose,
+                default_log_level.as_deref().unwrap_or("info"),
+            );
             let mut layers: Vec<
                 Box<dyn tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync>,
             > = Vec::new();

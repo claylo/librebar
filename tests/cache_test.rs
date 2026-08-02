@@ -262,11 +262,18 @@ fn cache_set_forces_private_permissions() {
         .set("secret", b"value", Duration::from_secs(60))
         .unwrap();
 
+    // The cache dir also holds .cache.lock; read_dir order is
+    // filesystem-dependent, so select the entry file by name.
     let entry = std::fs::read_dir(tmp.path())
         .unwrap()
-        .next()
-        .unwrap()
-        .unwrap();
+        .map(|entry| entry.unwrap())
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("v2-") && name.ends_with(".cache"))
+        })
+        .expect("cache entry file present");
     assert_eq!(
         entry.metadata().unwrap().permissions().mode() & 0o777,
         0o600

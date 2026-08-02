@@ -1011,6 +1011,7 @@ async fn retries_use_exponential_backoff() {
 fn client_is_cloneable() {
     let client = HttpClient::from_app("librebar-test", "0.1.0").unwrap();
     let cloned = client.clone();
+    assert_eq!(cloned.config().user_agent, client.config().user_agent);
     assert_eq!(cloned.config().user_agent, "librebar-test/0.1.0");
 }
 

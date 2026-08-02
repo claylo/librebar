@@ -240,7 +240,9 @@ impl CookieJar {
         }
         let mut remaining = Vec::new();
         for cookies in by_domain.values_mut() {
-            let excess = cookies.len().saturating_sub(self.limits.max_cookies_per_domain);
+            let excess = cookies
+                .len()
+                .saturating_sub(self.limits.max_cookies_per_domain);
             if excess > 0 {
                 cookies.sort_unstable();
                 evict_cookies(
@@ -256,7 +258,9 @@ impl CookieJar {
         }
 
         // 3. Total eviction using remaining keys
-        let excess = remaining.len().saturating_sub(self.limits.max_cookies_total);
+        let excess = remaining
+            .len()
+            .saturating_sub(self.limits.max_cookies_total);
         if excess > 0 {
             remaining.sort_unstable();
             evict_cookies(

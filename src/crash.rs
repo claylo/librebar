@@ -176,7 +176,10 @@ pub fn install(app_name: &str, version: &str) {
 /// The file is named with a timestamp and `.crash` extension. Files are
 /// owner-only on Unix, existing same-timestamp files are not replaced, and
 /// only the ten newest crash dumps in `dir` are retained.
-pub fn try_write_crash_dump_to(info: &CrashInfo, dir: &Path) -> std::result::Result<PathBuf, CrashDumpError> {
+pub fn try_write_crash_dump_to(
+    info: &CrashInfo,
+    dir: &Path,
+) -> std::result::Result<PathBuf, CrashDumpError> {
     std::fs::create_dir_all(dir).map_err(CrashDumpError::CreateDir)?;
 
     let ts = info.timestamp.replace([':', '.'], "-");

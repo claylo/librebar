@@ -262,20 +262,19 @@ pub fn try_resolve_log_target_with(
     dir_override: Option<PathBuf>,
     config_dir: Option<PathBuf>,
 ) -> std::result::Result<LogTarget, LogTargetError> {
-    resolve_log_target_with(service, path_override, dir_override, config_dir)
-        .map_err(|msg| {
-            // Map known string error patterns to typed variants.
-            // This preserves backward compatibility with the string-based API.
-            if msg.contains("file name") {
-                LogTargetError::NoFileName
-            } else if msg.contains("UTF-8") {
-                LogTargetError::InvalidUtf8
-            } else {
-                LogTargetError::NoWritableDir {
-                    candidates: Vec::new(),
-                }
+    resolve_log_target_with(service, path_override, dir_override, config_dir).map_err(|msg| {
+        // Map known string error patterns to typed variants.
+        // This preserves backward compatibility with the string-based API.
+        if msg.contains("file name") {
+            LogTargetError::NoFileName
+        } else if msg.contains("UTF-8") {
+            LogTargetError::InvalidUtf8
+        } else {
+            LogTargetError::NoWritableDir {
+                candidates: Vec::new(),
             }
-        })
+        }
+    })
 }
 
 fn default_log_candidates(platform_dir: Option<PathBuf>) -> Vec<PathBuf> {
@@ -437,7 +436,8 @@ impl PrivateDailyAppender {
         if self.file_ext.is_empty() {
             self.dir.join(&self.file_stem)
         } else {
-            self.dir.join(format!("{}.{}", self.file_stem, self.file_ext))
+            self.dir
+                .join(format!("{}.{}", self.file_stem, self.file_ext))
         }
     }
 }

@@ -153,12 +153,7 @@ fn try_resolve_log_target_returns_typed_error_for_path_without_file_name() {
 #[test]
 fn try_resolve_log_target_succeeds_with_dir_override() {
     let temp = tempfile::TempDir::new().unwrap();
-    let target = logging::try_resolve_log_target_with(
-        "demo",
-        None,
-        Some(temp.path().into()),
-        None,
-    )
-    .unwrap();
+    let target =
+        logging::try_resolve_log_target_with("demo", None, Some(temp.path().into()), None).unwrap();
     assert_eq!(target.file_name, "demo.jsonl");
 }

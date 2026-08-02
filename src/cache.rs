@@ -348,13 +348,14 @@ pub struct ClearReport {
 /// filesystems that do not support advisory locking.
 fn acquire_cache_lock(dir: &Path) -> Option<File> {
     let lock_path = dir.join(".cache.lock");
-    let file = File::options()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock_path)
-        .ok()?;
+    let mut options = File::options();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let file = options.open(lock_path).ok()?;
     file.lock().ok()?;
     Some(file)
 }
