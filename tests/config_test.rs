@@ -619,6 +619,33 @@ fn loader_dotconfig_dir_takes_precedence() {
 }
 
 #[test]
+fn loader_preserves_extension_before_layout_precedence() {
+    let tmp = TempDir::new().unwrap();
+    let project_dir = tmp.path().join("project");
+    let dotconfig_dir = project_dir.join(".config");
+    fs::create_dir_all(&dotconfig_dir).unwrap();
+
+    fs::write(dotconfig_dir.join("test-app.yaml"), "log_level: debug\n").unwrap();
+    fs::write(project_dir.join(".test-app.toml"), r#"log_level = "warn""#).unwrap();
+
+    let project_dir = camino::Utf8PathBuf::try_from(project_dir).unwrap();
+
+    let (config, sources): (TestConfig, _) = librebar::config::ConfigLoader::new("test-app")
+        .with_user_config(false)
+        .without_environment()
+        .without_boundary_marker()
+        .with_project_search(&project_dir)
+        .load()
+        .unwrap();
+
+    assert_eq!(config.log_level, librebar::config::LogLevel::Warn);
+    assert_eq!(
+        sources.project_file.unwrap(),
+        project_dir.join(".test-app.toml")
+    );
+}
+
+#[test]
 fn loader_boundary_marker_stops_search() {
     let tmp = TempDir::new().unwrap();
     let parent = tmp.path().join("parent");

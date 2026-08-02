@@ -34,7 +34,8 @@
 //! Search stops at a `.git` boundary by default (configurable via
 //! [`ConfigLoader::with_boundary_marker()`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::ffi::{OsStr, OsString};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
@@ -676,26 +677,52 @@ impl ConfigLoader {
 
     /// Find project config by walking up from the given directory.
     fn find_project_config(&self, start: &Utf8Path) -> Option<Utf8PathBuf> {
+        let candidates: Vec<_> = CONFIG_EXTENSIONS
+            .iter()
+            .map(|ext| {
+                (
+                    format!("{}.{ext}", self.app_name),
+                    format!(".{}.{ext}", self.app_name),
+                )
+            })
+            .collect();
+        let read_entry_names = |directory: &Utf8Path| -> std::io::Result<HashSet<OsString>> {
+            std::fs::read_dir(directory.as_std_path())?
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect()
+        };
+        let candidate_is_file =
+            |entries: Option<&HashSet<OsString>>, directory: &Utf8Path, name: &str| match entries {
+                Some(entries) if !entries.contains(OsStr::new(name)) => false,
+                _ => directory.join(name).is_file(),
+            };
         let mut current = Some(start.to_path_buf());
 
         while let Some(dir) = current {
-            for ext in CONFIG_EXTENSIONS {
+            let root_entries = read_entry_names(&dir).ok();
+            let dotconfig_dir = dir.join(".config");
+            let dotconfig_entries = match root_entries.as_ref() {
+                Some(entries) if entries.contains(OsStr::new(".config")) => {
+                    read_entry_names(&dotconfig_dir).ok()
+                }
+                Some(_) => Some(HashSet::new()),
+                None => None,
+            };
+
+            for (regular_name, dotfile_name) in &candidates {
                 // .config/app.ext
-                let dotconfig = dir.join(format!(".config/{}.{ext}", self.app_name));
-                if dotconfig.is_file() {
-                    return Some(dotconfig);
+                if candidate_is_file(dotconfig_entries.as_ref(), &dotconfig_dir, regular_name) {
+                    return Some(dotconfig_dir.join(regular_name));
                 }
 
                 // .app.ext
-                let dotfile = dir.join(format!(".{}.{ext}", self.app_name));
-                if dotfile.is_file() {
-                    return Some(dotfile);
+                if candidate_is_file(root_entries.as_ref(), &dir, dotfile_name) {
+                    return Some(dir.join(dotfile_name));
                 }
 
                 // app.ext
-                let regular = dir.join(format!("{}.{ext}", self.app_name));
-                if regular.is_file() {
-                    return Some(regular);
+                if candidate_is_file(root_entries.as_ref(), &dir, regular_name) {
+                    return Some(dir.join(regular_name));
                 }
             }
 
