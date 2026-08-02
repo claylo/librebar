@@ -110,12 +110,12 @@ fn main() -> Result<()> {
 
 fn build_runner(app: &librebar::App<Config>) -> DoctorRunner {
     let mut runner = DoctorRunner::new();
-    runner.add(Box::new(ConfigCheck {
+    runner.add(ConfigCheck {
         sources: app.config_sources().clone(),
-    }));
-    runner.add(Box::new(LogDirCheck {
+    });
+    runner.add(LogDirCheck {
         app_name: app.app_name().to_string(),
-    }));
+    });
     runner
 }
 

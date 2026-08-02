@@ -4,8 +4,10 @@
 use librebar::diagnostics::{
     CheckResult, CheckStatus, DebugBundle, DoctorCheck, DoctorRunner, Redactor,
 };
+use std::cell::Cell;
 use std::io::Read;
 use std::path::Path;
+use std::rc::Rc;
 use tempfile::TempDir;
 
 fn read_archive_entry(archive_path: &Path, name: &str) -> (Vec<u8>, u32) {
@@ -60,6 +62,25 @@ impl DoctorCheck for AlwaysFailCheck {
     }
 }
 
+struct LocalCheck {
+    runs: Rc<Cell<usize>>,
+}
+
+impl DoctorCheck for LocalCheck {
+    fn name(&self) -> &str {
+        "local"
+    }
+
+    fn category(&self) -> &str {
+        "test"
+    }
+
+    fn run(&self) -> CheckResult {
+        self.runs.set(self.runs.get() + 1);
+        CheckResult::new(CheckStatus::Ok, "Local check ran")
+    }
+}
+
 struct FixedRedactor;
 
 impl Redactor for FixedRedactor {
@@ -71,16 +92,30 @@ impl Redactor for FixedRedactor {
 #[test]
 fn runner_registers_checks() {
     let mut runner = DoctorRunner::new();
-    runner.add(Box::new(AlwaysPassCheck));
-    runner.add(Box::new(AlwaysFailCheck));
+    runner.add(AlwaysPassCheck);
+    runner.add(AlwaysFailCheck);
     assert_eq!(runner.check_count(), 2);
+}
+
+#[test]
+fn runner_accepts_an_unboxed_non_send_check() {
+    let runs = Rc::new(Cell::new(0));
+    let mut runner = DoctorRunner::new();
+    runner.add(LocalCheck {
+        runs: Rc::clone(&runs),
+    });
+
+    let results = runner.run_all();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(runs.get(), 1);
 }
 
 #[test]
 fn runner_executes_all_checks() {
     let mut runner = DoctorRunner::new();
-    runner.add(Box::new(AlwaysPassCheck));
-    runner.add(Box::new(AlwaysFailCheck));
+    runner.add(AlwaysPassCheck);
+    runner.add(AlwaysFailCheck);
     let results = runner.run_all();
     assert_eq!(results.len(), 2);
 }
@@ -88,8 +123,8 @@ fn runner_executes_all_checks() {
 #[test]
 fn runner_reports_pass_and_fail() {
     let mut runner = DoctorRunner::new();
-    runner.add(Box::new(AlwaysPassCheck));
-    runner.add(Box::new(AlwaysFailCheck));
+    runner.add(AlwaysPassCheck);
+    runner.add(AlwaysFailCheck);
     let results = runner.run_all();
     let summary = DoctorRunner::summarize(&results);
     assert_eq!(summary.passed, 1);

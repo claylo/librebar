@@ -142,6 +142,28 @@ schema metadata keeps its existing constructors and builders.
 build, so Cargo feature unification no longer changes the struct's shape. The
 setting affects requests only when the `http-cache` feature is enabled.
 
+## Register doctor checks without boxing
+
+Pass concrete checks directly to `DoctorRunner::add`; the runner now owns its
+heterogeneous storage detail:
+
+```rust
+# use librebar::diagnostics::{CheckResult, CheckStatus, DoctorCheck, DoctorRunner};
+# struct ConfigCheck;
+# impl DoctorCheck for ConfigCheck {
+#     fn name(&self) -> &str { "config" }
+#     fn category(&self) -> &str { "configuration" }
+#     fn run(&self) -> CheckResult {
+#         CheckResult::new(CheckStatus::Ok, "Config valid")
+#     }
+# }
+let mut runner = DoctorRunner::new();
+runner.add(ConfigCheck);
+```
+
+Remove the old `Box::new(...)` wrapper. `DoctorCheck` also no longer requires
+`Send`, so sequential checks may hold thread-local state such as `Rc`.
+
 ## Update release checks
 
 Replace the old `UpdateChecker::new(app, version, "owner/repo")` call with the

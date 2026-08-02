@@ -20,7 +20,7 @@
 //! }
 //!
 //! let mut runner = DoctorRunner::new();
-//! runner.add(Box::new(ConfigCheck));
+//! runner.add(ConfigCheck);
 //! let results = runner.run_all();
 //! let report = DoctorRunner::format_report(&results);
 //! assert!(report.contains("config"));
@@ -34,7 +34,7 @@ use crate::error::{Error, Result};
 // ─── Doctor Framework ──────────────────────────────────────────────
 
 /// Trait for doctor checks. Implement for each diagnostic check.
-pub trait DoctorCheck: Send {
+pub trait DoctorCheck {
     /// Short name for the check (e.g., "config", "permissions").
     fn name(&self) -> &str;
 
@@ -119,8 +119,8 @@ impl DoctorRunner {
     }
 
     /// Register a check.
-    pub fn add(&mut self, check: Box<dyn DoctorCheck>) {
-        self.checks.push(check);
+    pub fn add(&mut self, check: impl DoctorCheck + 'static) {
+        self.checks.push(Box::new(check));
     }
 
     /// Number of registered checks.
