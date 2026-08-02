@@ -217,6 +217,10 @@ fn debug_bundle_redacts_sensitive_values_from_text_formats() {
         );
         assert!(content.contains("[REDACTED]"), "{name}: {content}");
         assert!(content.contains(visible), "{name}: {content}");
+        if name.ends_with(".yaml") {
+            let parsed: serde_json::Value = serde_saphyr::from_str(&content).unwrap();
+            assert_eq!(parsed["safe"], "yaml-visible");
+        }
     }
 }
 

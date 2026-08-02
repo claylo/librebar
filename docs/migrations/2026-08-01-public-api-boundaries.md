@@ -44,6 +44,23 @@ and preserves it through `std::error::Error::source()`.
 
 ## Update MCP stdio setup
 
+Librebar now re-exports RMCP 3.1. The stdio helper and `ServiceExt::serve`
+setup remain the same, but applications that use types through
+`librebar::mcp::rmcp` must adopt RMCP 3's MCP model changes. In particular,
+review code that constructs protocol metadata, task-extension values, cache
+hints, annotations, or structured tool results; those public wire models
+changed between RMCP 2.2 and 3.1.
+
+Manual `ServerHandler::call_tool` implementations now return
+`CallToolResponse`. Convert an ordinary completed result with `.into()`:
+
+```rust
+# use librebar::mcp::rmcp::model::{CallToolResponse, CallToolResult};
+# fn complete(result: CallToolResult) -> CallToolResponse {
+result.into()
+# }
+```
+
 Pass the stdio value straight to RMCP:
 
 ```rust

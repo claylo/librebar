@@ -55,18 +55,46 @@ ignore = []
 # ==============================================================================
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 wildcards = "allow"
 highlight = "all"
 deny = []
-skip = []
+skip = [
+    # OpenTelemetry's protobuf/Tonic stack still requires base64 0.22; remove
+    # when that stack joins Librebar, RMCP, and serde-saphyr on 0.23.
+    "base64@0.22.1",
+    # const-hex (through opentelemetry-proto) still requires cpufeatures 0.2;
+    # remove when it joins sha2 0.11 on cpufeatures 0.3.
+    "cpufeatures@0.2.17",
+    # ring/redox_users still require getrandom 0.2; remove when both advance.
+    "getrandom@0.2.17",
+    # rand 0.9 (through OpenTelemetry) still requires getrandom 0.3; remove
+    # when it joins tempfile and RMCP's uuid on getrandom 0.4.
+    "getrandom@0.3.4",
+    # The older target-gated r-efi follows getrandom 0.3; remove with that
+    # getrandom exception.
+    "r-efi@5.3.0",
+    # owo-colors deliberately enables both supports-color majors; remove only
+    # when upstream drops the compatibility implementation.
+    "supports-color@2.1.0",
+    # The async/derive ecosystem still spans syn 2 and 3; remove when the
+    # remaining darling, futures, tracing, RMCP, and codegen macros reach 3.
+    "syn@2.0.119",
+    # ring still requires windows-sys 0.52; remove when it joins the rest of
+    # the graph on 0.61 or later.
+    "windows-sys@0.52.0",
+]
+
+[[bans.features]]
+crate = "base64@0.23"
+deny = ["simd-unsafe"]
 
 # ==============================================================================
 # Source Control
 # ==============================================================================
 
 [sources]
-unknown-registry = "warn"
+unknown-registry = "deny"
 unknown-git = "warn"
 allow-git = []
 allow-registry = [

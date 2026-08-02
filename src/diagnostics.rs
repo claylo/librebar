@@ -298,7 +298,9 @@ fn redact_structured_text(name: &str, text: &str) -> Option<String> {
             if !redact_value(&mut value) {
                 return Some(text.to_string());
             }
-            serde_saphyr::to_string(&value).ok()
+            // JSON is a YAML 1.2 subset. Emitting it avoids enabling
+            // serde-saphyr's serializer and its unsafe-by-default base64 path.
+            serde_json::to_string_pretty(&value).ok()
         }
         _ => None,
     }

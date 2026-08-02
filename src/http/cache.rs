@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::time::{Duration, SystemTime};
 
 use base64::Engine as _;
@@ -227,7 +228,11 @@ fn fingerprint_request_headers(headers: &mut HeaderMap) {
             hasher.update(name.as_str().as_bytes());
             hasher.update(b"\0");
             hasher.update(value.as_bytes());
-            let fingerprint = format!("sha256:{}:{:x}", name.as_str(), hasher.finalize());
+            let mut fingerprint = format!("sha256:{}:", name.as_str());
+            for byte in hasher.finalize() {
+                write!(&mut fingerprint, "{byte:02x}")
+                    .expect("writing hexadecimal bytes to a String cannot fail");
+            }
             headers.append(
                 name.clone(),
                 HeaderValue::from_str(&fingerprint)
@@ -879,6 +884,19 @@ mod tests {
         assert_eq!(headers["pragma"], "no-cache");
         assert_eq!(headers[IF_NONE_MATCH], "\"client-v1\"");
         assert_eq!(headers[IF_MODIFIED_SINCE], "Wed, 21 Oct 2015 07:28:00 GMT");
+    }
+
+    #[test]
+    fn policy_fingerprint_keeps_its_lowercase_sha256_wire_format() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("api-secret"));
+
+        fingerprint_request_headers(&mut headers);
+
+        assert_eq!(
+            headers["x-api-key"],
+            "sha256:x-api-key:baa6eb8f7c6e61f92564f39afcb39896b922150f7783c82baae1bec1cafec52a"
+        );
     }
 
     #[test]

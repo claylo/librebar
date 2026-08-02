@@ -63,7 +63,7 @@ use librebar::mcp::ServiceExt;
 use librebar::mcp::rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ContentBlock, ListToolsResult,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
     },
     service::RequestContext,
@@ -324,7 +324,7 @@ impl ServerHandler for GreetServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         if request.name != "greet" {
             return Err(McpError::invalid_params(
                 format!("unknown tool: {}", request.name),
@@ -341,6 +341,6 @@ impl ServerHandler for GreetServer {
 
         let output = format!("{}, {}!", self.greeting, name);
         tracing::info!(name = %name, "greet tool invoked");
-        Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(output)]).into())
     }
 }

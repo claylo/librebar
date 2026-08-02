@@ -41,7 +41,7 @@ owo-colors = { version = "4.3", features = ["supports-colors"], optional = true 
 
 # Feature: config
 toml = { version = "1.1", optional = true }
-serde-saphyr = { version = "1.0", optional = true }
+serde-saphyr = { version = "1.0", default-features = false, features = ["deserialize"], optional = true }
 serde_json = { version = "1.0", optional = true }
 serde_path_to_error = { version = "0.1.20", optional = true }
 camino = { version = "1.2", features = ["serde1"], optional = true }
@@ -63,7 +63,7 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 tracing-opentelemetry = { version = "0.33", optional = true }
 
 # Feature: mcp
-rmcp = { version = "2.2", features = ["server", "transport-io"], optional = true }
+rmcp = { version = "3.1", default-features = false, features = ["server", "transport-io"], optional = true }
 
 # Feature: http
 bytes = { version = "1.12", optional = true }
@@ -78,7 +78,7 @@ tower-http = { version = "0.7", features = ["decompression-br", "decompression-g
 
 # Feature: http-cache
 http-cache-semantics = { version = "3.0", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 # Feature: http-cookies
 cookie_store = { version = "0.22", default-features = false, features = ["public_suffix", "serde_json"], optional = true }
@@ -87,9 +87,9 @@ publicsuffix = { version = "2.3", optional = true }
 url = { version = "2.5", optional = true }
 
 # Feature: cache
-# default-features = false to opt out of `simd-unsafe`, which base64 0.23
-# added to its default feature set. `std` re-enables `alloc`; the cache module
-# only needs STANDARD encode/decode, which the safe implementation provides.
+# Keep base64's `simd-unsafe` default disabled across the complete graph; the
+# cargo-deny feature ban rejects any transitive dependency that re-enables it.
+# `std` re-enables `alloc`; cache needs only the safe STANDARD codec.
 base64 = { version = "0.23", default-features = false, features = ["std"], optional = true }
 tempfile = { version = "3.27", optional = true }
 
