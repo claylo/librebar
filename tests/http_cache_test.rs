@@ -443,7 +443,7 @@ async fn ordinary_cache_read_errors_are_returned_before_network() {
         .await
         .expect_err("ordinary cache read I/O errors must be returned");
 
-    assert!(error.to_string().contains("cache error"), "{error}");
+    assert!(error.to_string().contains("cache I/O error"), "{error}");
 }
 
 #[tokio::test]

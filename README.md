@@ -755,7 +755,9 @@ other public API change.
 Errors from implementation dependencies use [`error::BoxError`](src/error.rs)
 instead of exposing the dependency's error type in a variant. The concrete
 error and any nested sources remain available through `Error::source()` and
-downcasting.
+downcasting. Each `Display` implementation describes only its own layer; use a
+chain-aware reporter or walk `Error::source()` when the complete cause chain is
+needed.
 
 See [Update dependency imports](docs/migrations/2026-08-01-public-api-boundaries.md)
 for the call-site changes and dependency cleanup steps.

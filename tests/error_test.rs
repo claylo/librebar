@@ -12,6 +12,17 @@ fn assert_immediate_source(error: &(dyn StdError + 'static), expected: &str) {
     assert_eq!(source.to_string(), expected);
 }
 
+fn chain_messages(mut error: &(dyn StdError + 'static)) -> Vec<String> {
+    let mut messages = Vec::new();
+    loop {
+        messages.push(error.to_string());
+        let Some(source) = error.source() else {
+            return messages;
+        };
+        error = source;
+    }
+}
+
 #[derive(Debug)]
 struct NestedError {
     source: std::io::Error,
@@ -53,6 +64,55 @@ fn boxed_source_preserves_nested_error_chain() {
             .to_string(),
         "root cause"
     );
+}
+
+#[cfg(feature = "config")]
+#[test]
+fn config_parse_chain_renders_each_message_once() {
+    let error = librebar::Error::ConfigParse {
+        path: "config.json".to_string(),
+        source: Box::new(librebar::error::ConfigParseError::Json(boxed(
+            "invalid document",
+        ))),
+    };
+
+    assert_eq!(
+        chain_messages(&error),
+        [
+            "failed to parse config file config.json",
+            "JSON parse error",
+            "invalid document"
+        ]
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn http_json_chain_renders_each_message_once() {
+    let error = librebar::Error::Http(librebar::error::HttpError::Json(boxed("invalid document")));
+
+    assert_eq!(
+        chain_messages(&error),
+        ["failed to decode JSON response", "invalid document"]
+    );
+}
+
+#[cfg(feature = "cache")]
+#[test]
+fn cache_io_chain_renders_each_message_once() {
+    let error = librebar::Error::Cache(librebar::error::CacheError::Io(std::io::Error::other(
+        "disk offline",
+    )));
+
+    assert_eq!(chain_messages(&error), ["cache I/O error", "disk offline"]);
+}
+
+#[cfg(feature = "diagnostics")]
+#[test]
+fn diagnostic_chain_renders_each_message_once() {
+    let error = librebar::Error::Diagnostic(std::io::Error::other("disk offline"));
+
+    assert_eq!(chain_messages(&error), ["diagnostic error", "disk offline"]);
 }
 
 #[cfg(feature = "config")]

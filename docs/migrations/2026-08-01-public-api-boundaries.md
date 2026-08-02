@@ -105,6 +105,24 @@ Every wrapped error is also available through `std::error::Error::source()`.
 Walking that chain reaches nested sources in the same order they were reported
 by the dependency.
 
+Error displays no longer append their source's display text. Context-bearing
+variants render one concise message, while the top-level HTTP and cache
+adapters delegate to their module error. This prevents chain-aware reporters
+from repeating the same cause at adjacent levels. Update snapshots or string
+comparisons that expected the old combined messages, and walk the source chain
+when reporting every cause:
+
+```rust
+fn report(error: &(dyn std::error::Error + 'static)) {
+    eprintln!("{error}");
+    let mut source = error.source();
+    while let Some(cause) = source {
+        eprintln!("caused by: {cause}");
+        source = cause.source();
+    }
+}
+```
+
 Final deserialization of layered configuration now reports
 `Error::ConfigValue { path, origin, source }`. The path identifies the failing
 Serde field, `origin` names the winning default, file, environment variable, or

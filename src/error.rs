@@ -33,7 +33,7 @@ where
 pub enum Error {
     /// Configuration file could not be parsed.
     #[cfg(feature = "config")]
-    #[error("failed to parse config file {path}: {source}")]
+    #[error("failed to parse config file {path}")]
     ConfigParse {
         /// Path to the config file that failed.
         path: String,
@@ -43,7 +43,7 @@ pub enum Error {
 
     /// Configuration deserialization failed.
     #[cfg(feature = "config")]
-    #[error("failed to deserialize config: {0}")]
+    #[error("failed to deserialize config")]
     ConfigDeserialize(#[source] BoxError),
 
     /// A merged configuration value could not be deserialized.
@@ -101,22 +101,22 @@ pub enum Error {
 
     /// OpenTelemetry exporter initialization failed.
     #[cfg(feature = "otel")]
-    #[error("failed to initialize OpenTelemetry: {0}")]
+    #[error("failed to initialize OpenTelemetry")]
     OtelInit(#[source] BoxError),
 
     /// Tracing global subscriber already set or initialization failed.
     #[cfg(feature = "logging")]
-    #[error("failed to initialize tracing subscriber: {0}")]
+    #[error("failed to initialize tracing subscriber")]
     TracingInit(#[source] BoxError),
 
     /// Shutdown signal handler registration failed.
     #[cfg(feature = "shutdown")]
-    #[error("failed to register shutdown handler: {0}")]
+    #[error("failed to register shutdown handler")]
     ShutdownInit(#[source] std::io::Error),
 
     /// No Tokio runtime available for async initialization.
     #[cfg(feature = "shutdown")]
-    #[error("no active Tokio runtime: {0}")]
+    #[error("no active Tokio runtime")]
     NoRuntime(#[source] BoxError),
 
     /// Another process already holds the requested lockfile.
@@ -129,27 +129,27 @@ pub enum Error {
 
     /// Lockfile acquisition failed.
     #[cfg(feature = "lockfile")]
-    #[error("failed to acquire lock: {0}")]
+    #[error("failed to acquire lock")]
     Lock(#[source] std::io::Error),
 
     /// HTTP client error.
     #[cfg(feature = "http")]
-    #[error("HTTP error: {0}")]
+    #[error(transparent)]
     Http(#[from] HttpError),
 
-    /// Cache I/O error.
+    /// Cache error.
     #[cfg(feature = "cache")]
-    #[error("cache error: {0}")]
+    #[error(transparent)]
     Cache(#[from] CacheError),
 
     /// External command dispatch error.
     #[cfg(feature = "dispatch")]
-    #[error("dispatch error: {0}")]
+    #[error("dispatch error")]
     Dispatch(#[source] std::io::Error),
 
     /// Diagnostic error.
     #[cfg(feature = "diagnostics")]
-    #[error("diagnostic error: {0}")]
+    #[error("diagnostic error")]
     Diagnostic(#[source] std::io::Error),
 
     /// I/O error during initialization.
@@ -168,19 +168,19 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum HttpError {
     /// TLS provider initialization failed.
-    #[error("TLS: {0}")]
+    #[error("TLS initialization failed")]
     Tls(#[source] BoxError),
     /// URL could not be parsed.
-    #[error("invalid URL: {0}")]
+    #[error("invalid URL")]
     InvalidUrl(#[source] BoxError),
     /// HTTP request could not be constructed.
-    #[error("request build: {0}")]
+    #[error("request build failed")]
     RequestBuild(#[source] BoxError),
     /// HTTP header value is invalid.
-    #[error("invalid header value: {0}")]
+    #[error("invalid header value")]
     InvalidHeaderValue(#[source] BoxError),
     /// Connection, protocol, or middleware error during request.
-    #[error("request: {0}")]
+    #[error("request failed")]
     Request(#[source] BoxError),
     /// A redirect attempted to move an HTTPS request to plaintext HTTP.
     #[error("refused HTTPS-to-HTTP redirect")]
@@ -196,7 +196,7 @@ pub enum HttpError {
     },
     /// A cookie jar could not be loaded or saved.
     #[cfg(feature = "http-cookies")]
-    #[error("cookie jar {operation} failed for {path}: {source}")]
+    #[error("cookie jar {operation} failed for {path}")]
     CookieJar {
         /// Operation that failed (`load` or `save`).
         operation: &'static str,
@@ -212,13 +212,13 @@ pub enum HttpError {
         maximum: usize,
     },
     /// Error reading response body.
-    #[error("response body: {0}")]
+    #[error("failed to read response body")]
     Body(#[source] BoxError),
     /// I/O or timeout error.
-    #[error("{0}")]
+    #[error("HTTP I/O error")]
     Io(#[from] std::io::Error),
     /// JSON deserialization of response body failed.
-    #[error("JSON: {0}")]
+    #[error("failed to decode JSON response")]
     Json(#[source] BoxError),
 }
 
@@ -228,13 +228,13 @@ pub enum HttpError {
 #[non_exhaustive]
 pub enum CacheError {
     /// Filesystem I/O error.
-    #[error("{0}")]
+    #[error("cache I/O error")]
     Io(#[from] std::io::Error),
     /// JSON serialization or deserialization error.
-    #[error("JSON: {0}")]
+    #[error("cache JSON error")]
     Json(#[source] BoxError),
     /// Base64 decoding error.
-    #[error("decode: {0}")]
+    #[error("failed to decode cache entry")]
     Decode(#[source] BoxError),
     /// Invalid or unsupported on-disk cache framing.
     #[error("invalid cache entry format: {0}")]
@@ -247,15 +247,15 @@ pub enum CacheError {
 #[non_exhaustive]
 pub enum ConfigParseError {
     /// TOML parse error.
-    #[error("{0}")]
+    #[error("TOML parse error")]
     Toml(#[source] BoxError),
     /// YAML parse error.
-    #[error("{0}")]
+    #[error("YAML parse error")]
     Yaml(#[source] BoxError),
     /// JSON parse error.
-    #[error("{0}")]
+    #[error("JSON parse error")]
     Json(#[source] BoxError),
     /// I/O error reading the file.
-    #[error("{0}")]
+    #[error("config file I/O error")]
     Io(#[from] std::io::Error),
 }
