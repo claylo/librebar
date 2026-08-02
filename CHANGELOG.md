@@ -1,3 +1,93 @@
+## [0.4.0] - 2026-08-02
+
+### 🚀 Features
+
+- *(core)* Complete config and HTTP foundation
+- *(cli)* Add agent-ready command contracts
+- *(core)* Enable the application foundation by default
+- *(http)* Add production defaults and cookie jars
+- *(http)* Add conditional requests and RFC-aware caching (#25)
+- *(update)* Add pluggable release sources
+- *(config)* Preserve merged value provenance
+- *(diagnostics)* Accept unboxed doctor checks
+- *(cli)* Make schema documents readable
+
+### 🐛 Bug Fixes
+
+- *(cli)* Stop CommonArgs rustdoc becoming the consumer's help text
+- *(cli)* Make --version-only global like every other common flag
+- *(release)* Cover feature matrix and docs.rs surface
+- *(diagnostics)* Redact and privatize debug bundles
+- *(logging)* Keep request credentials out of logs
+- *(crash)* Privatize and bound crash dumps
+- *(diagnostics)* Stream sanitized files into bundles
+- *(http)* Redact response debug output
+- *(crash)* Write structured JSON crash dumps
+- *(diagnostics)* Make debug bundles chainable
+- *(cache)* Store HTTP bodies as raw bytes
+- *(cache)* Keep filesystem I/O off async workers
+- *(http)* Fingerprint cached request headers
+- *(cache)* Prune expired entries during active writes
+- *(cache)* Avoid durable syncs for disposable entries
+- *(cache)* Log HTTP cache eviction failures
+- *(cache)* Avoid unlinking expired entries on read
+- *(http)* Reject public-suffix domain cookies
+- *(http)* Harden redirect trust boundaries
+- *(http)* Recover poisoned cookie jars
+- *(http)* Bound cookie jar growth
+- *(crash)* Make panic-hook notices fallible
+- *(shutdown)* Escalate repeated process signals
+- *(output)* Make fallback writes fallible
+- *(http)* Saturate retry budget consumption
+- *(otel)* Drive Hyper exports on a private runtime
+- *(otel)* Honor HTTP JSON protocol selection
+- *(otel)* Remove inert environment name fields
+- *(otel)* Drive gRPC export on a private runtime
+- *(logging)* Probe the daily log path
+- *(api)* Define public dependency boundaries
+- *(error)* Preserve dependency source chains
+- *(api)* Stabilize growable public structs
+- *(lockfile)* Distinguish contention from failures
+- *(error)* Avoid duplicate source messages
+- *(lockfile)* Avoid shared Linux lock paths
+- *(config)* Honor boundary at project search root
+- *(dispatch)* Ignore unsafe PATH entries
+- *(update)* Validate release metadata
+- *(safety)* Forbid unsafe in library target
+- *(safety)* Audit remediation across all modules
+
+### 💼 Other
+
+- *(deps)* Adopt serde-saphyr 1.0
+- *(deps)* Update and ratchet dependency graph
+- *(policy)* Tighten supply-chain exceptions
+- *(cargo)* Simplify local profile settings
+
+### 📚 Documentation
+
+- *(api)* Enforce valid intra-doc links
+- *(project)* Add contributor guide and status badges
+- *(cache)* Define cache write durability policy
+- *(cache)* Define eviction observability policy
+- *(http)* Document compiled TLS trust anchors
+- *(lockfile)* Qualify advisory locking guarantees
+
+### ⚡ Performance
+
+- *(logging)* Avoid cloning span field maps
+- *(config)* Reduce discovery filesystem probes
+
+### 🧪 Testing
+
+- *(docs)* Compile README examples as doctests
+- *(bench)* Measure cache reads and writes
+
+### ⚙️ Miscellaneous Tasks
+
+- Tune bito config
+- *(release)* Add attested crates.io publishing
+- *(checks)* Run shared Just recipes
+- Exclude record dir from packaging, consolidate superpowers, add audits
 ## [0.3.0] - 2026-07-26
 
 ### 🚀 Features
@@ -7,6 +97,10 @@
 ### 📚 Documentation
 
 - Add latest handoff
+
+### ⚙️ Miscellaneous Tasks
+
+- Release 0.3.0
 ## [0.2.0] - 2026-07-25
 
 ### 🚀 Features
