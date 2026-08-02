@@ -43,7 +43,7 @@
 //!
 //! | Feature | Module | Use when your app needs... |
 //! |---------|--------|---------------------------|
-//! | `lockfile` | [`lockfile`] | Exclusive file locks to prevent concurrent instances |
+//! | `lockfile` | [`lockfile`] | Advisory file locks for local process coordination |
 //! | `dispatch` | [`dispatch`] | Git-style `{app}-{subcommand}` plugin lookup on PATH |
 //! | `diagnostics` | [`diagnostics`] | `doctor` command framework + `.tar.gz` debug bundles |
 //!

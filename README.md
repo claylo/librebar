@@ -110,7 +110,7 @@ librebar = { version = "0.3", default-features = false, features = ["cli", "conf
 | `otel-http-json` | OpenTelemetry via OTLP/HTTP with JSON encoding |
 | `otel-grpc` | OpenTelemetry via gRPC (adds Tonic transport) |
 | `mcp` | Model Context Protocol server support (rmcp wrapper) |
-| `lockfile` | Exclusive file locks to prevent concurrent instances |
+| `lockfile` | Advisory file locks for local process coordination |
 | `dispatch` | Git-style `{app}-{subcommand}` plugin lookup on PATH |
 
 ### Benchmarking (dev-only)

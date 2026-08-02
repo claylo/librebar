@@ -1,8 +1,17 @@
-//! Exclusive operation locking via file locks.
+//! Advisory operation locking via file locks.
 //!
-//! Provides a simple advisory lock backed by a file descriptor. Two instances
-//! of the same application cannot hold the lock simultaneously — ideal for
-//! preventing concurrent runs of background daemons, update checkers, etc.
+//! Provides a simple advisory lock backed by a file descriptor. On a local
+//! filesystem that implements the platform's locking semantics, two processes
+//! using the same lock path cannot hold the lock simultaneously.
+//!
+//! # Platform behavior
+//!
+//! File locking is advisory and filesystem-dependent. Use a local filesystem
+//! that supports the operating system's file-locking API. Network, FUSE, and
+//! overlay filesystems may reject locking or fail to provide mutual exclusion;
+//! callers that pass a directory to [`Lockfile::new`] are responsible for that
+//! directory's locking guarantees. The lock is released when the guard's file
+//! descriptor closes, so a lock file left on disk is not a stale held lock.
 //!
 //! # Example
 //!
@@ -85,8 +94,9 @@ impl Lockfile {
 
     /// Try to acquire exclusive access.
     ///
-    /// Returns a [`LockGuard`] on success. While the guard is alive no other
-    /// process using this crate can acquire the same lock.
+    /// Returns a [`LockGuard`] on success. On filesystems that implement the
+    /// platform's advisory-locking semantics, no other process using the same
+    /// lock path can acquire it while the guard is alive.
     ///
     /// # Errors
     ///
