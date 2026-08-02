@@ -11,16 +11,13 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
-    "BSL-1.0",      # Boost Software License
     "ISC",
     "MIT",
-    "MIT-0",        # MIT No Attribution
     "MPL-2.0",      # Mozilla Public License (weak copyleft, permissive for linking)
     "Zlib",
 
     # Public domain dedications
     "0BSD",         # Zero-Clause BSD
-    "CC0-1.0",      # Creative Commons Zero
     "Unlicense",
 
     # Unicode/text processing
@@ -33,7 +30,7 @@ allow = [
 ]
 
 confidence-threshold = 0.8
-unused-allowed-license = "allow"
+unused-allowed-license = "deny"
 
 # ==============================================================================
 # Security Advisories
@@ -48,6 +45,8 @@ db-urls = ["https://github.com/RustSec/advisory-db"]
 # Empty. RUSTSEC-2025-0141 (bincode 1.3.3 unmaintained) was ignored here while
 # gungraun pinned `bincode = "1"`. gungraun 0.19.4 migrated to `bincode-next`
 # 2.x, so bincode 1.x is no longer in the graph and the suppression was removed.
+# Future ignores must use the structured form with a reason, the upstream
+# removal condition, and an expiration date that fails closed.
 ignore = []
 
 # ==============================================================================
