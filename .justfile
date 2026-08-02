@@ -32,6 +32,9 @@ test:
 test-ci:
   cargo nextest run --workspace --all-features --profile ci
 
+bench:
+  cargo bench --bench cache --features bench,cache
+
 # Doc-tests run with --all-features so feature-gated modules (mcp, dispatch,
 # diagnostics, otel, http, etc.) actually compile their examples. Without
 # this flag, doc blocks inside `#[cfg(feature = "…")]` modules are skipped

@@ -159,6 +159,11 @@ name = "plugin-cli-hello-greet"
 path = "examples/plugin-cli/hello-greet/main.rs"
 required-features = ["cli"]
 
+[[bench]]
+name = "cache"
+harness = false
+required-features = ["bench", "cache"]
+
 [features]
 default = ["cli", "config", "logging", "crash", "cache", "diagnostics"]
 cli = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:owo-colors", "dep:serde_json"]

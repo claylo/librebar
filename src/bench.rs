@@ -53,7 +53,7 @@ pub use gungraun;
 #[cfg(feature = "bench")]
 #[derive(Clone, Debug)]
 pub struct BenchConfig {
-    /// Minimum number of iterations per benchmark.
+    /// Minimum number of sampling iterations per benchmark.
     pub min_iterations: u32,
     /// Maximum time per benchmark in seconds.
     pub max_time_secs: u64,
