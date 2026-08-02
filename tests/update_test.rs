@@ -196,6 +196,50 @@ async fn corrupt_cache_falls_back_to_the_source() {
 }
 
 #[tokio::test]
+async fn malformed_cached_release_falls_back_to_the_source() {
+    let tmp = TempDir::new().unwrap();
+    let cache = Cache::new(tmp.path());
+    let cached = serde_json::to_vec(&ReleaseInfo::new(
+        "9.0.0\u{1b}[31m",
+        "https://example.com/forged-release",
+    ))
+    .unwrap();
+    cache
+        .set("latest-release", &cached, Duration::from_secs(60))
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let checker = UpdateChecker::new(
+        "test-app",
+        "0.1.0",
+        CountingSource {
+            calls: Arc::clone(&calls),
+            release: ReleaseInfo::new("0.2.0", "https://example.com/fallback-release"),
+        },
+    )
+    .with_cache(cache);
+
+    let update = checker.check().await.unwrap().unwrap();
+
+    assert_eq!(update.latest, "0.2.0");
+    assert_eq!(update.url, "https://example.com/fallback-release");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn terminal_unsafe_release_url_is_not_displayed() {
+    let checker = UpdateChecker::new(
+        "test-app",
+        "0.1.0",
+        StaticSource {
+            release: ReleaseInfo::new("0.2.0", "https://example.com/releases/0.2.0\u{1b}[31m"),
+        },
+    )
+    .without_cache();
+
+    assert!(checker.check().await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn github_source_fetches_a_release_from_a_custom_api() {
     let (api_base, requests, server) = spawn_release_server(
         r#"{"tag_name":"v0.2.0","html_url":"https://example.com/releases/0.2.0"}"#,
@@ -263,6 +307,26 @@ async fn malformed_github_release_preserves_the_decode_error() {
     server.join().unwrap();
 }
 
+#[tokio::test]
+async fn github_source_rejects_terminal_unsafe_metadata() {
+    let (api_base, _requests, server) = spawn_release_server(
+        r#"{"tag_name":"v0.2.0","html_url":"https://example.com/releases/0.2.0\u001b[31m"}"#,
+    );
+    let source = GitHubReleaseSource::new(
+        "owner/repo",
+        HttpClient::from_app("test-app", "0.1.0").unwrap(),
+    )
+    .with_api_base(api_base);
+
+    let error = source.latest_release().await.unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "GitHub release API returned invalid release metadata"
+    );
+    server.join().unwrap();
+}
+
 #[test]
 fn suppressed_by_env_var() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -290,6 +354,7 @@ fn version_is_newer() {
     assert!(librebar::update::is_newer("1.2.3", "1.2.4"));
     assert!(!librebar::update::is_newer("0.2.0", "0.1.0"));
     assert!(!librebar::update::is_newer("1.0.0", "1.0.0"));
+    assert!(!librebar::update::is_newer("0.1.0", "9.0.0\u{1b}[31m"));
 }
 
 #[test]
@@ -302,4 +367,20 @@ fn update_info_display() {
     let msg = info.message();
     assert!(msg.contains("0.2.0"));
     assert!(msg.contains("0.1.0"));
+}
+
+#[test]
+fn update_info_display_escapes_terminal_controls() {
+    let info = UpdateInfo::new(
+        "0.1.0",
+        "0.2.0\u{1b}[31m",
+        "https://example.com/releases/0.2.0\nforged",
+    );
+
+    let message = info.message();
+
+    assert!(!message.contains('\u{1b}'));
+    assert!(!message.contains('\n'));
+    assert!(message.contains(r"\u{1b}"));
+    assert!(message.contains(r"\n"));
 }

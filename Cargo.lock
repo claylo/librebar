@@ -1258,6 +1258,7 @@ dependencies = [
  "publicsuffix",
  "rmcp",
  "rustls",
+ "semver",
  "serde",
  "serde-saphyr",
  "serde_json",

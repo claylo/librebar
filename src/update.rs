@@ -17,10 +17,11 @@
 //! # }
 //! ```
 
+use std::borrow::Cow;
 use std::time::Duration;
 
 use crate::error::{BoxError, boxed_error};
-use crate::http::{Bytes, HeaderValue, HttpClient, Method, Request, StatusCode, header};
+use crate::http::{Bytes, HeaderValue, HttpClient, Method, Request, StatusCode, Uri, header};
 
 /// Re-export of [`mod@async_trait`], used to implement [`ReleaseSource`].
 pub use async_trait::async_trait;
@@ -46,6 +47,31 @@ impl ReleaseInfo {
             url: url.into(),
         }
     }
+}
+
+fn release_url_is_valid(url: &str) -> bool {
+    url.parse::<Uri>()
+        .is_ok_and(|uri| uri.scheme_str() == Some("https") && uri.authority().is_some())
+}
+
+fn release_info_is_valid(release: &ReleaseInfo) -> bool {
+    semver::Version::parse(&release.version).is_ok() && release_url_is_valid(&release.url)
+}
+
+fn escape_terminal_controls(value: &str) -> Cow<'_, str> {
+    if !value.chars().any(char::is_control) {
+        return Cow::Borrowed(value);
+    }
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    Cow::Owned(escaped)
 }
 
 /// Backend that discovers the latest available release.
@@ -113,6 +139,8 @@ enum GitHubReleaseError {
     Status(StatusCode),
     #[error("GitHub release API returned invalid JSON")]
     Decode(#[source] serde_json::Error),
+    #[error("GitHub release API returned invalid release metadata")]
+    InvalidMetadata,
 }
 
 #[derive(serde::Deserialize)]
@@ -151,7 +179,11 @@ impl ReleaseSource for GitHubReleaseSource {
             .tag_name
             .strip_prefix('v')
             .unwrap_or(&release.tag_name);
-        Ok(ReleaseInfo::new(version, release.html_url))
+        let release = ReleaseInfo::new(version, release.html_url);
+        if !release_info_is_valid(&release) {
+            return Err(Box::new(GitHubReleaseError::InvalidMetadata));
+        }
+        Ok(release)
     }
 }
 
@@ -197,7 +229,9 @@ impl UpdateInfo {
     pub fn message(&self) -> String {
         format!(
             "Update available: {} -> {} ({})",
-            self.current, self.latest, self.url
+            escape_terminal_controls(&self.current),
+            escape_terminal_controls(&self.latest),
+            escape_terminal_controls(&self.url)
         )
     }
 }
@@ -312,6 +346,10 @@ impl UpdateChecker {
             .latest_release()
             .await
             .map_err(UpdateError::Source)?;
+        if !release_info_is_valid(&release) {
+            tracing::debug!("ignored invalid release metadata");
+            return Ok(None);
+        }
         self.cache_release(&release).await;
         Ok(self.compare_versions_with_url(&release.version, &release.url))
     }
@@ -320,7 +358,11 @@ impl UpdateChecker {
         let cache = self.cache.clone()?;
         match crate::cache::run_io(move || cache.get(CACHE_KEY)).await {
             Ok(Some(bytes)) => match serde_json::from_slice(&bytes) {
-                Ok(release) => Some(release),
+                Ok(release) if release_info_is_valid(&release) => Some(release),
+                Ok(_) => {
+                    tracing::debug!("ignored invalid update cache metadata");
+                    None
+                }
                 Err(error) => {
                     tracing::debug!(error = %error, "ignored invalid update cache entry");
                     None
@@ -350,7 +392,7 @@ impl UpdateChecker {
     }
 
     fn compare_versions_with_url(&self, latest: &str, url: &str) -> Option<UpdateInfo> {
-        if is_newer(&self.current_version, latest) {
+        if release_url_is_valid(url) && is_newer(&self.current_version, latest) {
             Some(UpdateInfo::new(&self.current_version, latest, url))
         } else {
             None
@@ -358,26 +400,16 @@ impl UpdateChecker {
     }
 }
 
-/// Compare two semver-ish version strings.
+/// Compare two semantic version strings.
 ///
-/// Returns `true` if `latest` is newer than `current`.
-/// Handles `major.minor.patch` format. Non-numeric segments
-/// are treated as 0.
+/// Returns `true` if both strings are valid semantic versions and `latest` is
+/// newer than `current`. Malformed versions are never treated as updates.
 pub fn is_newer(current: &str, latest: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> { v.split('.').map(|s| s.parse().unwrap_or(0)).collect() };
-
-    let curr = parse(current);
-    let lat = parse(latest);
-
-    for i in 0..curr.len().max(lat.len()) {
-        let c = curr.get(i).copied().unwrap_or(0);
-        let l = lat.get(i).copied().unwrap_or(0);
-        if l > c {
-            return true;
-        }
-        if l < c {
-            return false;
-        }
-    }
-    false
+    let Ok(current) = semver::Version::parse(current) else {
+        return false;
+    };
+    let Ok(latest) = semver::Version::parse(latest) else {
+        return false;
+    };
+    latest > current
 }
