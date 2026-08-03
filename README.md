@@ -74,14 +74,14 @@ Out of the box, with no feature flags:
 
 ```toml
 [dependencies]
-librebar = "0.4"
+librebar = "0.5"
 ```
 
 Default features give you the full foundation. To trim for a minimal binary, disable defaults and opt in:
 
 ```toml
 [dependencies]
-librebar = { version = "0.4", default-features = false, features = ["cli", "config", "logging"] }
+librebar = { version = "0.5", default-features = false, features = ["cli", "config", "logging"] }
 ```
 
 ## Features
@@ -126,25 +126,25 @@ Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; 
 
 ```toml
 # Full foundation (default features, nothing extra needed)
-librebar = "0.4"
+librebar = "0.5"
 
 # Long-running service with graceful shutdown and observability
-librebar = { version = "0.4", features = ["shutdown", "otel"] }
+librebar = { version = "0.5", features = ["shutdown", "otel"] }
 
 # CLI tool with update checks
-librebar = { version = "0.4", features = ["update"] }
+librebar = { version = "0.5", features = ["update"] }
 
 # Stateful HTTP client with an explicitly enabled cookie jar
-librebar = { version = "0.4", features = ["http-cookies"] }
+librebar = { version = "0.5", features = ["http-cookies"] }
 
 # RFC-aware persistent GET caching
-librebar = { version = "0.4", features = ["http-cache"] }
+librebar = { version = "0.5", features = ["http-cache"] }
 
 # Plugin-extensible CLI (git-style subcommands)
-librebar = { version = "0.4", features = ["dispatch"] }
+librebar = { version = "0.5", features = ["dispatch"] }
 
 # Minimal — just CLI and config, no logging or crash dumps
-librebar = { version = "0.4", default-features = false, features = ["cli", "config"] }
+librebar = { version = "0.5", default-features = false, features = ["cli", "config"] }
 ```
 
 The `http` client follows up to 10 redirects, transparently decodes gzip and
@@ -816,7 +816,7 @@ one-line "using it for X" — not a gate for 1.0, just an invitation.
 External consumers surface ergonomic issues that self-dogfooding can't,
 and earlier signal makes for a better 1.0.
 
-Until then, pin to a specific minor version (`librebar = "0.4"`) if you
+Until then, pin to a specific minor version (`librebar = "0.5"`) if you
 want the patch-only guarantee.
 
 ## Contributing

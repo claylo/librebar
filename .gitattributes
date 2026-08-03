@@ -38,6 +38,15 @@ LICENSE* text eol=lf
 *.gz binary
 *.tgz binary
 
+# cased audits
+record/audits/**/report.html linguist-generated=true
+record/audits/**/findings.yaml linguist-generated=true
+record/audits/**/recon.yaml linguist-generated=true
+record/audits/**/README.md linguist-generated=true
+record/audits/**/CLAUDE.md linguist-generated=true
+record/audits/**/AGENTS.md linguist-generated=true
+record/audits/**/assets/*.svg linguist-generated=true
+
 # Exclude from release archives (crate publish)
 # Copier answers file (template state, not project code)
 .repo.yml export-ignore
@@ -49,4 +58,4 @@ AGENTS.md export-ignore
 bench-reports/ export-ignore
 scripts/ export-ignore
 docs/ export-ignore
-
+record/ export-ignore

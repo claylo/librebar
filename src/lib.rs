@@ -71,16 +71,16 @@
 //!
 //! ```toml
 //! # Minimal CLI tool
-//! librebar = "0.4"
+//! librebar = "0.5"
 //!
 //! # CLI tool with update checks
-//! librebar = { version = "0.4", features = ["shutdown", "update"] }
+//! librebar = { version = "0.5", features = ["shutdown", "update"] }
 //!
 //! # Long-running service with observability
-//! librebar = { version = "0.4", features = ["shutdown", "otel"] }
+//! librebar = { version = "0.5", features = ["shutdown", "otel"] }
 //!
 //! # Plugin-extensible CLI (git-style subcommands)
-//! librebar = { version = "0.4", features = ["dispatch"] }
+//! librebar = { version = "0.5", features = ["dispatch"] }
 //! ```
 //!
 //! # Builder usage
