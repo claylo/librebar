@@ -74,14 +74,14 @@ Out of the box, with no feature flags:
 
 ```toml
 [dependencies]
-librebar = "0.3"
+librebar = "0.4"
 ```
 
 Default features give you the full foundation. To trim for a minimal binary, disable defaults and opt in:
 
 ```toml
 [dependencies]
-librebar = { version = "0.3", default-features = false, features = ["cli", "config", "logging"] }
+librebar = { version = "0.4", default-features = false, features = ["cli", "config", "logging"] }
 ```
 
 ## Features
@@ -126,25 +126,25 @@ Feature implications: `update` → `http` + `cache`; `http-cookies` → `http`; 
 
 ```toml
 # Full foundation (default features, nothing extra needed)
-librebar = "0.3"
+librebar = "0.4"
 
 # Long-running service with graceful shutdown and observability
-librebar = { version = "0.3", features = ["shutdown", "otel"] }
+librebar = { version = "0.4", features = ["shutdown", "otel"] }
 
 # CLI tool with update checks
-librebar = { version = "0.3", features = ["update"] }
+librebar = { version = "0.4", features = ["update"] }
 
 # Stateful HTTP client with an explicitly enabled cookie jar
-librebar = { version = "0.3", features = ["http-cookies"] }
+librebar = { version = "0.4", features = ["http-cookies"] }
 
 # RFC-aware persistent GET caching
-librebar = { version = "0.3", features = ["http-cache"] }
+librebar = { version = "0.4", features = ["http-cache"] }
 
 # Plugin-extensible CLI (git-style subcommands)
-librebar = { version = "0.3", features = ["dispatch"] }
+librebar = { version = "0.4", features = ["dispatch"] }
 
 # Minimal — just CLI and config, no logging or crash dumps
-librebar = { version = "0.3", default-features = false, features = ["cli", "config"] }
+librebar = { version = "0.4", default-features = false, features = ["cli", "config"] }
 ```
 
 The `http` client follows up to 10 redirects, transparently decodes gzip and
@@ -373,9 +373,13 @@ use serde::{Deserialize, Serialize};
 struct Config {
     log_level: librebar::config::LogLevel,
     log_dir: Option<Utf8PathBuf>,
+    log_retention_days: Option<u64>,
     database_url: Option<String>,
 }
 ```
+
+Three field names are recognized by the builder and wired into logging:
+`log_level`, `log_dir`, and `log_retention_days`. Everything else is yours.
 
 `camino` is re-exported by the `config` feature. Use `librebar::camino` rather
 than adding your own dependency: `Utf8Path` shows up in librebar's public API,
@@ -554,6 +558,38 @@ The logging system finds a writable log directory using this priority:
 6. stderr (if no writable directory is found)
 
 Where `{APP}` is the uppercased, hyphen-to-underscore app name (e.g., `my-tool` becomes `MY_TOOL_LOG_PATH`).
+
+### Rotated log retention
+
+The live log keeps a stable name so it stays tailable; rotation renames it with
+the date and compresses it:
+
+```text
+{app}.jsonl                  ← live, always this name
+{app}.2026-08-02.jsonl.zst   ← rotated at the day boundary, then compressed
+```
+
+Rotated logs are pruned after **7 days** by default. Set `log_retention_days`
+in your config to change the window, or **`0` to keep them forever**:
+
+```yaml
+log_retention_days: 30   # four weeks
+log_retention_days: 0    # never prune
+```
+
+Zero rather than `null` is the opt-out because the builder reads your config
+through `serde_json::to_value`, where an `Option<u64>` you never set and one
+explicitly set to null look identical — so null-means-never would stop the
+default from ever applying. Zero is unambiguous and writes the same in TOML,
+YAML, and JSON. It is also refused as a *window*: a zero-day retention would
+put the cutoff at "now" and delete everything, which is never what a typo in
+this field should cost you.
+
+The builder's `.with_log_retention(...)` overrides the config field, and
+`logging::prune_rotated_logs` runs a sweep directly. Pruning happens once at
+startup and again after each rotation, and only ever removes files matching the
+rotated-log naming above — the live file and anything librebar did not write
+are left alone.
 
 ### Log level precedence
 
@@ -780,7 +816,7 @@ one-line "using it for X" — not a gate for 1.0, just an invitation.
 External consumers surface ergonomic issues that self-dogfooding can't,
 and earlier signal makes for a better 1.0.
 
-Until then, pin to a specific minor version (`librebar = "0.3"`) if you
+Until then, pin to a specific minor version (`librebar = "0.4"`) if you
 want the patch-only guarantee.
 
 ## Contributing

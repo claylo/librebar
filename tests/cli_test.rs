@@ -832,3 +832,65 @@ fn manpage_generation_writes_collision_free_full_command_paths() {
     assert_eq!(unique.len(), names.len());
     assert!(generated.iter().all(|path| path.is_file()));
 }
+
+// ─── -c/--config ────────────────────────────────────────────────────
+
+/// `-c/--config` is global, so it works before or after a subcommand.
+#[test]
+fn config_flag_is_global() {
+    use clap::Parser as _;
+
+    #[derive(clap::Parser)]
+    #[command(name = "myapp", version = "1.0.0")]
+    struct Cli {
+        #[command(flatten)]
+        common: librebar::cli::CommonArgs,
+        #[command(subcommand)]
+        command: Option<Sub>,
+    }
+
+    #[derive(clap::Subcommand)]
+    enum Sub {
+        Run,
+    }
+
+    let before = Cli::try_parse_from(["myapp", "-c", "a.toml", "run"]).unwrap();
+    assert_eq!(
+        before.common.config.as_deref(),
+        Some(std::path::Path::new("a.toml"))
+    );
+    assert!(before.command.is_some());
+
+    let after = Cli::try_parse_from(["myapp", "run", "--config", "b.toml"]).unwrap();
+    assert_eq!(
+        after.common.config.as_deref(),
+        Some(std::path::Path::new("b.toml"))
+    );
+
+    let absent = Cli::try_parse_from(["myapp", "run"]).unwrap();
+    assert!(absent.common.config.is_none());
+}
+
+/// `config_path()` hands the loader a `Utf8PathBuf`, or `None` when unset.
+#[cfg(feature = "config")]
+#[test]
+fn config_path_converts_to_utf8() {
+    use clap::Parser as _;
+
+    #[derive(clap::Parser)]
+    #[command(name = "myapp", version = "1.0.0")]
+    struct Cli {
+        #[command(flatten)]
+        common: librebar::cli::CommonArgs,
+    }
+
+    let cli = Cli::try_parse_from(["myapp", "-c", "conf/app.toml"]).unwrap();
+    let path = cli.common.config_path().unwrap();
+    assert_eq!(
+        path.as_deref().map(librebar::camino::Utf8Path::as_str),
+        Some("conf/app.toml")
+    );
+
+    let bare = Cli::try_parse_from(["myapp"]).unwrap();
+    assert!(bare.common.config_path().unwrap().is_none());
+}

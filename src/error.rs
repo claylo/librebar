@@ -94,6 +94,18 @@ pub enum Error {
     #[error("no configuration file found")]
     ConfigNotFound,
 
+    /// A filesystem path supplied by the user is not valid UTF-8.
+    ///
+    /// librebar's config and logging APIs are `camino`-based, so a path that
+    /// cannot be represented as UTF-8 is rejected rather than silently
+    /// ignored.
+    #[cfg(feature = "config")]
+    #[error("path is not valid UTF-8: {path}")]
+    PathNotUtf8 {
+        /// Lossy rendering of the offending path, for diagnostics.
+        path: String,
+    },
+
     /// Log directory is not writable.
     #[cfg(feature = "logging")]
     #[error("no writable log directory found")]

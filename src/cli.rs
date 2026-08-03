@@ -137,6 +137,10 @@ pub struct CommonArgs {
     #[arg(short = 'C', long, global = true)]
     pub chdir: Option<PathBuf>,
 
+    /// Read configuration from FILE instead of discovering it.
+    #[arg(short = 'c', long, global = true, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+
     /// Only print errors (suppresses warnings/info).
     #[arg(short, long, global = true)]
     pub quiet: bool,
@@ -201,6 +205,47 @@ impl CommonArgs {
         } else {
             self.format.resolve_for(stdout_is_terminal)
         }
+    }
+
+    /// The `--config` path as UTF-8, ready for the config loader.
+    ///
+    /// Returns `Ok(None)` when the flag was not supplied, which callers should
+    /// treat as "discover config normally":
+    ///
+    /// ```no_run
+    /// # use clap::Parser;
+    /// # #[derive(Parser)]
+    /// # struct Cli {
+    /// #     #[command(flatten)]
+    /// #     common: librebar::cli::CommonArgs,
+    /// # }
+    /// # fn main() -> librebar::Result<()> {
+    /// # let cli = Cli::parse();
+    /// let mut loader = librebar::config::ConfigLoader::new("myapp");
+    /// if let Some(path) = cli.common.config_path()? {
+    ///     loader = loader.with_file(&path);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::PathNotUtf8`](crate::Error::PathNotUtf8) if the path
+    /// is not valid UTF-8. librebar's config API is `camino`-based, so a path
+    /// it cannot represent has to be rejected rather than silently skipped.
+    #[cfg(feature = "config")]
+    pub fn config_path(&self) -> crate::Result<Option<camino::Utf8PathBuf>> {
+        self.config
+            .as_ref()
+            .map(|path| {
+                camino::Utf8PathBuf::from_path_buf(path.clone()).map_err(|path| {
+                    crate::Error::PathNotUtf8 {
+                        path: path.to_string_lossy().into_owned(),
+                    }
+                })
+            })
+            .transpose()
     }
 
     /// Perform every startup side effect these flags imply.
@@ -349,6 +394,7 @@ mod tests {
         let args = CommonArgs {
             version_only: true,
             chdir: None,
+            config: None,
             quiet: false,
             verbose: 0,
             color: ColorChoice::Never,

@@ -157,3 +157,156 @@ fn try_resolve_log_target_succeeds_with_dir_override() {
         logging::try_resolve_log_target_with("demo", None, Some(temp.path().into()), None).unwrap();
     assert_eq!(target.file_name, "demo.jsonl");
 }
+
+// ─── rotated log retention ──────────────────────────────────────────
+
+use std::time::{Duration, SystemTime};
+
+/// Set a file's mtime to `age` in the past, so retention can be exercised
+/// without waiting for real time to pass.
+fn backdate(path: &std::path::Path, age: Duration) {
+    let when = SystemTime::now() - age;
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+}
+
+fn touch(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, b"x").unwrap();
+    path
+}
+
+/// The default is seven days.
+#[test]
+fn default_retention_is_seven_days() {
+    assert_eq!(
+        logging::DEFAULT_LOG_RETENTION,
+        Duration::from_secs(7 * 24 * 60 * 60)
+    );
+    let cfg = logging::LoggingConfig::from_app_name("myapp");
+    assert_eq!(cfg.retention, Some(logging::DEFAULT_LOG_RETENTION));
+}
+
+/// Rotated logs past the cutoff go; recent ones and the live file stay.
+///
+/// The names here are the documented rotation scheme —
+/// `{app}.{date}.jsonl` becomes `{app}.{date}.jsonl.zst` after compression.
+#[test]
+fn prune_removes_only_expired_rotated_logs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    let live = touch(path, "myapp.jsonl");
+    let recent = touch(path, "myapp.2026-08-02.jsonl.zst");
+    let old_zst = touch(path, "myapp.2026-07-01.jsonl.zst");
+    let old_plain = touch(path, "myapp.2026-07-02.jsonl");
+
+    // The live file is backdated too: age must not save it from the name check.
+    backdate(&live, Duration::from_secs(40 * 24 * 60 * 60));
+    backdate(&recent, Duration::from_secs(2 * 24 * 60 * 60));
+    backdate(&old_zst, Duration::from_secs(30 * 24 * 60 * 60));
+    backdate(&old_plain, Duration::from_secs(30 * 24 * 60 * 60));
+
+    let removed =
+        logging::prune_rotated_logs(path, "myapp.jsonl", logging::DEFAULT_LOG_RETENTION).unwrap();
+
+    assert_eq!(removed, 2);
+    assert!(live.exists(), "the live log must never be pruned");
+    assert!(recent.exists(), "a log inside the window must survive");
+    assert!(!old_zst.exists());
+    assert!(!old_plain.exists());
+}
+
+/// Pruning only touches files it could have produced.
+#[test]
+fn prune_ignores_unrelated_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    let strangers = [
+        touch(path, "notes.txt"),
+        touch(path, "otherapp.2026-07-01.jsonl.zst"),
+        touch(path, "myapp.log"),
+        touch(path, "myapp.2026-07-01.txt"),
+    ];
+    for stranger in &strangers {
+        backdate(stranger, Duration::from_secs(90 * 24 * 60 * 60));
+    }
+
+    let removed =
+        logging::prune_rotated_logs(path, "myapp.jsonl", logging::DEFAULT_LOG_RETENTION).unwrap();
+
+    assert_eq!(removed, 0);
+    for stranger in &strangers {
+        assert!(
+            stranger.exists(),
+            "{} should be untouched",
+            stranger.display()
+        );
+    }
+}
+
+/// Retention is configurable, and a short window prunes more aggressively.
+#[test]
+fn prune_honors_a_custom_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    let two_days_old = touch(path, "myapp.2026-08-01.jsonl.zst");
+    backdate(&two_days_old, Duration::from_secs(2 * 24 * 60 * 60));
+
+    let kept =
+        logging::prune_rotated_logs(path, "myapp.jsonl", Duration::from_secs(7 * 24 * 60 * 60))
+            .unwrap();
+    assert_eq!(kept, 0, "inside a 7-day window");
+
+    let pruned =
+        logging::prune_rotated_logs(path, "myapp.jsonl", Duration::from_secs(24 * 60 * 60))
+            .unwrap();
+    assert_eq!(pruned, 1, "outside a 1-day window");
+}
+
+/// `with_retention(None)` opts out entirely.
+#[test]
+fn retention_can_be_disabled() {
+    let cfg = logging::LoggingConfig::from_app_name("myapp").with_retention(None);
+    assert_eq!(cfg.retention, None);
+}
+
+/// `with_retention_days` is the config-friendly spelling.
+#[test]
+fn retention_days_convenience() {
+    let cfg = logging::LoggingConfig::from_app_name("myapp").with_retention_days(3);
+    assert_eq!(cfg.retention, Some(Duration::from_secs(3 * 24 * 60 * 60)));
+}
+
+/// Zero days disables pruning; it does not mean "delete everything."
+///
+/// Null cannot serve as the sentinel: an `Option<u64>` the user never set
+/// serializes to null too, so null-means-never would defeat the default.
+/// Reading zero literally would put the cutoff at now and wipe every rotated
+/// log, which is what a typo in this field would otherwise cost.
+#[test]
+fn zero_retention_days_disables_pruning() {
+    let cfg = logging::LoggingConfig::from_app_name("myapp").with_retention_days(0);
+    assert_eq!(cfg.retention, None);
+}
+
+/// Even reached directly, a zero window refuses to delete anything.
+#[test]
+fn prune_refuses_a_zero_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    let ancient = touch(path, "myapp.2020-01-01.jsonl.zst");
+    backdate(&ancient, Duration::from_secs(3650 * 24 * 60 * 60));
+
+    let removed = logging::prune_rotated_logs(path, "myapp.jsonl", Duration::ZERO).unwrap();
+
+    assert_eq!(removed, 0);
+    assert!(ancient.exists(), "a zero window must not delete anything");
+}
