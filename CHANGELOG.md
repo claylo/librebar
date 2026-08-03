@@ -1,3 +1,12 @@
+## [0.5.0] - 2026-08-03
+
+### 🚀 Features
+
+- *(logging)* Prune rotated logs, add -c/--config and data-local dir (#26)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update doc example versions, omit cased reports from linguist
 ## [0.4.0] - 2026-08-02
 
 ### 🚀 Features
@@ -55,6 +64,7 @@
 - *(update)* Validate release metadata
 - *(safety)* Forbid unsafe in library target
 - *(safety)* Audit remediation across all modules
+- *(cache)* Private lock perms, deterministic permissions test
 
 ### 💼 Other
 
@@ -88,6 +98,7 @@
 - *(release)* Add attested crates.io publishing
 - *(checks)* Run shared Just recipes
 - Exclude record dir from packaging, consolidate superpowers, add audits
+- Release 0.4.0
 ## [0.3.0] - 2026-07-26
 
 ### 🚀 Features
