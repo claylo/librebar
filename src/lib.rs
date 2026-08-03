@@ -71,16 +71,16 @@
 //!
 //! ```toml
 //! # Minimal CLI tool
-//! librebar = "0.3"
+//! librebar = "0.4"
 //!
 //! # CLI tool with update checks
-//! librebar = { version = "0.3", features = ["shutdown", "update"] }
+//! librebar = { version = "0.4", features = ["shutdown", "update"] }
 //!
 //! # Long-running service with observability
-//! librebar = { version = "0.3", features = ["shutdown", "otel"] }
+//! librebar = { version = "0.4", features = ["shutdown", "otel"] }
 //!
 //! # Plugin-extensible CLI (git-style subcommands)
-//! librebar = { version = "0.3", features = ["dispatch"] }
+//! librebar = { version = "0.4", features = ["dispatch"] }
 //! ```
 //!
 //! # Builder usage
@@ -307,6 +307,8 @@ struct BuilderInner {
     #[cfg(feature = "logging")]
     log_dir: Option<std::path::PathBuf>,
     #[cfg(feature = "logging")]
+    log_retention: Option<Option<std::time::Duration>>,
+    #[cfg(feature = "logging")]
     log_level: Option<String>,
     #[cfg(feature = "otel")]
     enable_otel: bool,
@@ -361,8 +363,11 @@ impl BuilderInner {
         // Build layers
         #[cfg(feature = "logging")]
         let (log_layer, log_guard) = if do_logging {
-            let log_cfg =
+            let mut log_cfg =
                 logging::LoggingConfig::from_app_name(&self.app_name).with_log_dir(self.log_dir);
+            if let Some(retention) = self.log_retention {
+                log_cfg = log_cfg.with_retention(retention);
+            }
             let (layer, guard) = logging::build_json_layer(&log_cfg)?;
             (Some(layer), Some(logging::LoggingGuard::from_guard(guard)))
         } else {
@@ -474,6 +479,16 @@ macro_rules! builder_methods {
             self
         }
 
+        /// Set how long rotated logs are kept.
+        ///
+        /// Overrides the application config's `log_retention_days` field.
+        /// Pass `None` to keep rotated logs forever.
+        #[cfg(feature = "logging")]
+        pub const fn with_log_retention(mut self, retention: Option<std::time::Duration>) -> Self {
+            self.inner.log_retention = Some(retention);
+            self
+        }
+
         /// Enable OpenTelemetry tracing export.
         #[cfg(feature = "otel")]
         pub const fn otel(mut self) -> Self {
@@ -545,6 +560,8 @@ pub fn init(app_name: &str) -> Builder {
             enable_logging: false,
             #[cfg(feature = "logging")]
             log_dir: None,
+            #[cfg(feature = "logging")]
+            log_retention: None,
             #[cfg(feature = "logging")]
             log_level: None,
             #[cfg(feature = "otel")]
@@ -765,6 +782,21 @@ where
             {
                 inner.log_level = Some(level.to_string());
             }
+            // A `log_retention_days` field on the application's config sets
+            // rotated-log retention. Zero disables pruning entirely.
+            //
+            // Absent and null both fall through to the default. They are not
+            // distinguishable here: an `Option<u64>` field the user never set
+            // serializes to null, so treating null as "keep forever" would
+            // mean the default never applied for the most natural field
+            // shape. Zero is the unambiguous opt-out, and it writes the same
+            // in TOML, YAML, and JSON.
+            if inner.log_retention.is_none()
+                && let Some(retention) =
+                    retention_from_config(value.get("log_retention_days").and_then(|v| v.as_u64()))
+            {
+                inner.log_retention = Some(retention);
+            }
         }
 
         let sub = inner.init_subsystems()?;
@@ -792,10 +824,60 @@ const fn default_cli() -> cli::CommonArgs {
     cli::CommonArgs {
         version_only: false,
         chdir: None,
+        config: None,
         quiet: false,
         verbose: 0,
         color: cli::ColorChoice::Auto,
         format: cli::OutputFormat::Auto,
         legacy_json: false,
+    }
+}
+
+/// Resolve a `log_retention_days` config value into a retention policy.
+///
+/// The outer `Option` is "did the config say anything?" — `None` leaves the
+/// default in place. The inner is the policy itself, where `None` means never
+/// prune.
+///
+/// `days` arrives as `None` for both an absent field and an explicit null,
+/// which `serde_json::to_value` renders identically for an unset
+/// `Option<u64>`. Both defer to the default; zero is the explicit opt-out.
+#[cfg(feature = "logging")]
+const fn retention_from_config(days: Option<u64>) -> Option<Option<std::time::Duration>> {
+    match days {
+        None => None,
+        Some(0) => Some(None),
+        Some(days) => Some(Some(std::time::Duration::from_secs(days * 24 * 60 * 60))),
+    }
+}
+
+#[cfg(all(test, feature = "logging"))]
+mod retention_tests {
+    use super::retention_from_config;
+    use std::time::Duration;
+
+    /// An absent or null field leaves the seven-day default alone.
+    ///
+    /// This is the case that was wrong first time through: treating null as
+    /// "keep forever" meant an `Option<u64>` field nobody set silently
+    /// disabled pruning, so the default never applied.
+    #[test]
+    fn absent_field_defers_to_the_default() {
+        assert_eq!(retention_from_config(None), None);
+    }
+
+    /// Zero is the explicit opt-out.
+    #[test]
+    fn zero_days_means_never_prune() {
+        assert_eq!(retention_from_config(Some(0)), Some(None));
+    }
+
+    /// Any other value is a window in days.
+    #[test]
+    fn positive_days_set_a_window() {
+        assert_eq!(
+            retention_from_config(Some(30)),
+            Some(Some(Duration::from_secs(30 * 24 * 60 * 60)))
+        );
     }
 }

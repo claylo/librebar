@@ -28,6 +28,7 @@ use serde_json::{Map, Value};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 use tracing::Event;
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::layer::Context as LayerContext;
@@ -43,6 +44,12 @@ pub use tracing_subscriber;
 const LOG_FILE_SUFFIX: &str = ".jsonl";
 const DEFAULT_LOG_DIR_UNIX: &str = "/var/log";
 
+/// How long rotated logs are kept when the application does not say.
+///
+/// Seven days covers the usual "what happened last week?" investigation while
+/// keeping a busy service's log directory bounded at roughly seven files.
+pub const DEFAULT_LOG_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 // ─── Public API ─────────────────────────────────────────────────────
 
 /// Configuration for logging setup.
@@ -57,6 +64,12 @@ pub struct LoggingConfig {
     pub env_log_dir: String,
     /// Directory for JSONL log files (from config). Falls back to platform defaults.
     pub log_dir: Option<PathBuf>,
+    /// How long to keep rotated logs. `None` keeps them forever.
+    ///
+    /// Defaults to [`DEFAULT_LOG_RETENTION`]. Applications usually set this
+    /// from their own config rather than calling the builder directly — see
+    /// [`with_retention`](Self::with_retention).
+    pub retention: Option<Duration>,
 }
 
 impl LoggingConfig {
@@ -71,6 +84,7 @@ impl LoggingConfig {
             env_log_path: format!("{prefix}_LOG_PATH"),
             env_log_dir: format!("{prefix}_LOG_DIR"),
             log_dir: None,
+            retention: Some(DEFAULT_LOG_RETENTION),
         }
     }
 
@@ -78,6 +92,41 @@ impl LoggingConfig {
     pub fn with_log_dir(mut self, dir: Option<PathBuf>) -> Self {
         self.log_dir = dir;
         self
+    }
+
+    /// Set how long rotated logs are kept.
+    ///
+    /// `None` disables pruning and keeps every rotated log indefinitely,
+    /// which is appropriate when an external log shipper or logrotate owns
+    /// the directory.
+    pub const fn with_retention(mut self, retention: Option<Duration>) -> Self {
+        self.retention = retention;
+        self
+    }
+
+    /// Set how long rotated logs are kept, in whole days.
+    ///
+    /// Convenience for the common case of a `log_retention_days` config
+    /// field.
+    ///
+    /// **Zero disables pruning** rather than meaning "keep nothing older than
+    /// today."
+    ///
+    /// A numeric sentinel rather than `null` because the builder reads config
+    /// through `serde_json::to_value`, where an `Option<u64>` field the user
+    /// never set is indistinguishable from one explicitly set to null. If
+    /// null meant "never," the default would never apply. Zero is unambiguous,
+    /// and it writes the same in all three formats librebar loads — TOML has
+    /// no null at all.
+    ///
+    /// Reading `0` literally would also let a single typo delete every rotated
+    /// log on the next sweep. Losing logs is the worse failure, so zero
+    /// resolves toward keeping them.
+    pub const fn with_retention_days(self, days: u64) -> Self {
+        if days == 0 {
+            return self.with_retention(None);
+        }
+        self.with_retention(Some(Duration::from_secs(days * 24 * 60 * 60)))
     }
 }
 
@@ -135,6 +184,7 @@ pub(crate) fn build_json_layer(
         &cfg.env_log_path,
         &cfg.env_log_dir,
         cfg.log_dir.as_deref(),
+        cfg.retention,
     ) {
         Ok(result) => result,
         Err(err) => {
@@ -324,6 +374,7 @@ fn build_log_writer(
     env_log_path: &str,
     env_log_dir: &str,
     config_log_dir: Option<&Path>,
+    retention: Option<Duration>,
 ) -> std::result::Result<
     (
         tracing_appender::non_blocking::NonBlocking,
@@ -341,7 +392,7 @@ fn build_log_writer(
         config_log_dir.map(PathBuf::from),
     )?;
 
-    let appender = PrivateDailyAppender::new(target.dir, target.file_name)?;
+    let appender = PrivateDailyAppender::new(target.dir, target.file_name, retention)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
 
     Ok((writer, guard))
@@ -390,21 +441,34 @@ struct PrivateDailyAppender {
     file_ext: String,
     date: String,
     file: File,
+    retention: Option<Duration>,
 }
 
 impl PrivateDailyAppender {
-    fn new(dir: PathBuf, file_name: String) -> std::result::Result<Self, String> {
+    fn new(
+        dir: PathBuf,
+        file_name: String,
+        retention: Option<Duration>,
+    ) -> std::result::Result<Self, String> {
         let (file_stem, file_ext) = split_log_file_name(&file_name);
         let date = current_log_date();
         let path = dir.join(&file_name);
         let file = open_private_append_file(&path)
             .map_err(|error| format!("Failed to open log file {}: {error}", path.display()))?;
+
+        // Sweep once at startup. A short-lived CLI may never reach a rotation
+        // boundary, so without this its rotated logs would never be pruned.
+        if let Some(retention) = retention {
+            let _ = prune_rotated_logs(&dir, &file_name, retention);
+        }
+
         Ok(Self {
             dir,
             file_stem,
             file_ext,
             date,
             file,
+            retention,
         })
     }
 
@@ -423,21 +487,32 @@ impl PrivateDailyAppender {
             self.file = open_private_append_file(&current_path).map_err(io::Error::other)?;
             self.date = date;
 
-            // Best-effort background compression of the rotated file.
-            // If anything fails the uncompressed file remains — no data loss.
+            // Best-effort background compression of the rotated file, then a
+            // prune sweep. Both run off the logging path; if anything fails
+            // the uncompressed file remains — no data loss.
+            let retention = self.retention;
+            let dir = self.dir.clone();
+            let live_name = self.live_file_name();
             std::thread::spawn(move || {
                 compress_rotated_log(&rotated_path);
+                if let Some(retention) = retention {
+                    let _ = prune_rotated_logs(&dir, &live_name, retention);
+                }
             });
         }
         Ok(())
     }
 
     fn stable_path(&self) -> PathBuf {
+        self.dir.join(self.live_file_name())
+    }
+
+    /// Name of the live log file — `{stem}.{ext}`, with no date in it.
+    fn live_file_name(&self) -> String {
         if self.file_ext.is_empty() {
-            self.dir.join(&self.file_stem)
+            self.file_stem.clone()
         } else {
-            self.dir
-                .join(format!("{}.{}", self.file_stem, self.file_ext))
+            format!("{}.{}", self.file_stem, self.file_ext)
         }
     }
 }
@@ -508,6 +583,80 @@ fn compress_rotated_log(path: &Path) {
     {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// Whether `name` is a rotated log belonging to `stem`/`ext`.
+///
+/// Rotation produces `{stem}.{date}.{ext}`, which compression then replaces
+/// with `{stem}.{date}.{ext}.zst`. The live file is `{stem}.{ext}` and must
+/// never match — it is currently open for append.
+///
+/// The match is deliberately narrow. Pruning deletes files, so anything it
+/// did not create stays put: a stray `notes.txt`, an unrelated `bito.log`, or
+/// the live file itself all fail this test.
+fn is_rotated_log(name: &str, stem: &str, ext: &str) -> bool {
+    let live = if ext.is_empty() {
+        stem.to_string()
+    } else {
+        format!("{stem}.{ext}")
+    };
+    if name == live || !name.starts_with(&format!("{stem}.")) {
+        return false;
+    }
+    if ext.is_empty() {
+        // `{stem}.{date}` or `{stem}.{date}.zst`
+        return true;
+    }
+    name.ends_with(&format!(".{ext}")) || name.ends_with(&format!(".{ext}.zst"))
+}
+
+/// Delete rotated logs for `file_name` in `dir` older than `retention`.
+///
+/// Returns the number of files removed. Rotation and compression leave files
+/// behind indefinitely; without this a long-lived service accumulates one
+/// compressed log per day forever.
+///
+/// Age comes from the file's modification time rather than the date in its
+/// name. Compression rewrites a rotated file moments after rotation, so the
+/// two agree, and mtime keeps working if the naming scheme ever changes.
+///
+/// Best-effort by design: a file whose metadata cannot be read is left alone,
+/// and a failed removal does not abort the sweep. Losing logs is worse than
+/// keeping them, so every uncertain case resolves toward keeping.
+///
+/// # Errors
+///
+/// Returns an error only if `dir` cannot be read.
+pub fn prune_rotated_logs(dir: &Path, file_name: &str, retention: Duration) -> io::Result<usize> {
+    // A zero window would put the cutoff at "now" and delete every rotated
+    // log. Nobody asks for that on purpose, and the callers that could
+    // produce it — a `log_retention_days = 0` config, an arithmetic slip —
+    // all mean "don't prune." Refuse rather than obey.
+    if retention.is_zero() {
+        return Ok(0);
+    }
+
+    let (stem, ext) = split_log_file_name(file_name);
+    let Some(cutoff) = SystemTime::now().checked_sub(retention) else {
+        return Ok(0);
+    };
+
+    let mut removed = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !is_rotated_log(name, &stem, &ext) {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if modified < cutoff && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 fn create_private_file(path: &Path) -> io::Result<File> {
@@ -739,5 +888,37 @@ mod tests {
         merge_span_fields(&mut output, &leaf);
 
         assert_eq!(output["request_id"], "leaf");
+    }
+
+    /// The rotated-log naming contract: `{app}.{date}.jsonl`, which
+    /// compression turns into `{app}.{date}.jsonl.zst`.
+    ///
+    /// The live file keeps a stable `{app}.jsonl` so it stays tailable. This
+    /// is the scheme `prune_rotated_logs` matches against, so a change here
+    /// silently stops pruning rather than failing loudly — hence the test.
+    #[test]
+    fn rotated_log_naming_is_app_date_ext() {
+        let (stem, ext) = split_log_file_name("bito.jsonl");
+        assert_eq!(stem, "bito");
+        assert_eq!(ext, "jsonl");
+
+        let rotated = format!("{stem}.2026-08-02.{ext}");
+        assert_eq!(rotated, "bito.2026-08-02.jsonl");
+        assert_eq!(format!("{rotated}.zst"), "bito.2026-08-02.jsonl.zst");
+
+        // Both forms are prunable; the live file is not.
+        assert!(is_rotated_log(&rotated, &stem, &ext));
+        assert!(is_rotated_log(&format!("{rotated}.zst"), &stem, &ext));
+        assert!(!is_rotated_log("bito.jsonl", &stem, &ext));
+    }
+
+    /// An app name containing a dot still splits correctly.
+    #[test]
+    fn dotted_app_name_keeps_its_stem() {
+        let (stem, ext) = split_log_file_name("my.app.jsonl");
+        assert_eq!(stem, "my.app");
+        assert_eq!(ext, "jsonl");
+        assert!(is_rotated_log("my.app.2026-08-02.jsonl.zst", &stem, &ext));
+        assert!(!is_rotated_log("my.app.jsonl", &stem, &ext));
     }
 }

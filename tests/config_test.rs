@@ -942,3 +942,44 @@ fn loader_yaml_file() {
     assert_eq!(config.log_level, librebar::config::LogLevel::Debug);
     assert_eq!(config.custom_field.as_deref(), Some("hello"));
 }
+
+// ─── XDG helpers ────────────────────────────────────────────────────
+
+/// All four XDG accessors resolve, and each is namespaced by app name.
+///
+/// `user_data_local_dir` was missing from this set until it was added
+/// alongside its three siblings; `logging` had been reaching for
+/// `data_local_dir` internally the whole time.
+#[test]
+fn xdg_helpers_resolve_and_namespace_by_app() {
+    let dirs = [
+        librebar::config::user_config_dir("librebar-xdg-test"),
+        librebar::config::user_cache_dir("librebar-xdg-test"),
+        librebar::config::user_data_dir("librebar-xdg-test"),
+        librebar::config::user_data_local_dir("librebar-xdg-test"),
+    ];
+
+    for dir in &dirs {
+        let dir = dir
+            .as_ref()
+            .expect("home directory should resolve in the test environment");
+        assert!(
+            dir.as_str().contains("librebar-xdg-test"),
+            "{dir} should be namespaced by app name"
+        );
+        assert!(dir.is_absolute(), "{dir} should be absolute");
+    }
+}
+
+/// The data and machine-local data directories are distinct concepts even
+/// where they resolve to the same path.
+///
+/// They agree on Linux and macOS and diverge on Windows, so this asserts the
+/// call works rather than that the paths differ.
+#[test]
+fn user_data_local_dir_resolves_independently() {
+    let data = librebar::config::user_data_dir("librebar-xdg-test");
+    let local = librebar::config::user_data_local_dir("librebar-xdg-test");
+
+    assert_eq!(data.is_some(), local.is_some());
+}

@@ -867,3 +867,17 @@ pub fn user_data_dir(app_name: &str) -> Option<Utf8PathBuf> {
     let proj_dirs = directories::ProjectDirs::from("", "", app_name)?;
     Utf8PathBuf::from_path_buf(proj_dirs.data_dir().to_path_buf()).ok()
 }
+
+/// Get the machine-local data directory for an application.
+///
+/// Unlike [`user_data_dir`], this location is not synchronized between a
+/// user's machines. Use it for state that is meaningless elsewhere — caches
+/// keyed by local paths, machine-specific identifiers, or logs.
+///
+/// On Linux and macOS this resolves to the same path as [`user_data_dir`];
+/// the two diverge on Windows, where roaming and local application data are
+/// genuinely different directories.
+pub fn user_data_local_dir(app_name: &str) -> Option<Utf8PathBuf> {
+    let proj_dirs = directories::ProjectDirs::from("", "", app_name)?;
+    Utf8PathBuf::from_path_buf(proj_dirs.data_local_dir().to_path_buf()).ok()
+}
