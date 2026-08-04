@@ -1,3 +1,13 @@
+## [0.6.0] - 2026-08-04
+
+### 🚀 Features
+
+- *(cli)* Make help compact by default and reachable to customize
+- *(builder)* Set the log level without a CommonArgs
+
+### 🐛 Bug Fixes
+
+- *(config)* Recover types for optional fields set from the environment (#27)
 ## [0.5.0] - 2026-08-03
 
 ### 🚀 Features
@@ -7,6 +17,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Update doc example versions, omit cased reports from linguist
+- Release 0.5.0
 ## [0.4.0] - 2026-08-02
 
 ### 🚀 Features
