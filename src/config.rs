@@ -631,11 +631,19 @@ impl ConfigLoader {
         // Environment overrides discovered config, but not an explicitly
         // selected file.
         if let Some(source) = self.environment_source.as_deref() {
-            let (overlay, variables, origins) =
+            let mut overlay =
                 environment::overlay(&self.app_name, &merged, source, self.unknown_environment)?;
-            sources.record_merge_origins(&merged, &overlay, &origins);
-            deep_merge(&mut merged, overlay)?;
-            sources.environment_variables = variables;
+            // Values that landed at a `null` schema position went in as strings
+            // because the lower layers had no type to offer. `C` does; ask it.
+            environment::retype(
+                &mut overlay.values,
+                &overlay.untyped,
+                &merged,
+                &|candidate: &Value| serde_json::from_value::<C>(candidate.clone()).is_ok(),
+            )?;
+            sources.record_merge_origins(&merged, &overlay.values, &overlay.origins);
+            deep_merge(&mut merged, overlay.values)?;
+            sources.environment_variables = overlay.applied;
         }
 
         // Explicit files represent deliberate user selection and override

@@ -436,10 +436,15 @@ Booleans accept only lowercase `true` and `false`; `1`, `yes`, and `TRUE` are
 errors. Quote JSON arrays and objects so the shell passes them intact.
 
 An empty value is still a value: string fields receive `""`, while numeric,
-boolean, array, and object fields report a parse error. A null schema position,
-including `Option<T>` with a `None` default, is treated as a string because the
-serialized schema cannot reveal `T`. A discovered file can provide a non-null
-schema value for an optional non-string field.
+boolean, array, and object fields report a parse error.
+
+A null schema position — `Option<T>` with a `None` default, which no file has
+set — carries no `T` to parse against. The value is read as a string, and if
+the config type rejects a string there, the target shape is established by
+testing samples against the type itself. `Option<u16>`, `Option<f64>`,
+`Option<bool>`, and `Option<Vec<_>>` all take environment values with no file
+present. `Option<String>` is unaffected, so an identifier like `00123` keeps
+its leading zeros instead of becoming a number.
 
 Unknown prefixed paths are ignored by default. Dynamic-map consumers can opt
 in to collecting them as strings:
