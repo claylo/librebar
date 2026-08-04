@@ -70,6 +70,11 @@ Out of the box, with no feature flags:
 - **Caching** — file-based key-value cache with TTL, collision-safe keys, XDG cache directory
 - **Diagnostics** — `doctor` command framework and `.tar.gz` debug bundle builder
 
+Migrating an existing app? [Migrating a claylo-rs repo to
+librebar](docs/adoption/claylo-rs-to-librebar.md) is the ordered playbook and
+trap list, written from the first real migration. The
+[bito case study](docs/adoption/bito-case-study.md) has the numbers.
+
 ## Installation
 
 ```toml
