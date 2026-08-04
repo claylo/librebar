@@ -158,3 +158,51 @@ fn builder_config_sources_empty_without_files() {
 
     assert!(app.config_sources().primary_file().is_none());
 }
+
+/// Verbosity has to be settable without a `CommonArgs`.
+///
+/// The level reached the filter only through config `log_level` or a
+/// `CommonArgs` handed to `with_cli`. An application adopting logging before
+/// its CLI had no way to set it, and could not build a `CommonArgs` by hand to
+/// bridge the gap — one field is `pub(crate)`, so it has to be parsed.
+#[test]
+fn with_log_level_sets_the_filter_default() {
+    let temp = TempDir::new().unwrap();
+    let app: librebar::App = librebar::init("librebar-log-level-test")
+        .logging()
+        .with_log_dir(temp.path().to_path_buf())
+        .with_log_level("debug")
+        .start()
+        .unwrap();
+
+    tracing::debug!("recorded at debug");
+    drop(app);
+
+    let log = fs::read_to_string(temp.path().join("librebar-log-level-test.jsonl")).unwrap();
+    assert!(log.contains("recorded at debug"), "{log}");
+}
+
+/// An explicit setting outranks the config file, matching `with_log_dir`.
+#[test]
+fn with_log_level_overrides_the_config_field() {
+    let temp = TempDir::new().unwrap();
+    let config = TestConfig {
+        log_level: librebar::config::LogLevel::Error,
+        custom: None,
+    };
+
+    let app = librebar::init("librebar-log-level-precedence-test")
+        .with_config(config)
+        .logging()
+        .with_log_dir(temp.path().to_path_buf())
+        .with_log_level("debug")
+        .start()
+        .unwrap();
+
+    tracing::debug!("explicit wins");
+    drop(app);
+
+    let log =
+        fs::read_to_string(temp.path().join("librebar-log-level-precedence-test.jsonl")).unwrap();
+    assert!(log.contains("explicit wins"), "{log}");
+}

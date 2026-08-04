@@ -479,6 +479,23 @@ macro_rules! builder_methods {
             self
         }
 
+        /// Set the default log level explicitly.
+        ///
+        /// Overrides the application config's `log_level` field. `-q` and `-v`
+        /// from [`with_cli`](Self::with_cli) still adjust from this baseline,
+        /// so an explicit level sets where verbosity counts from rather than
+        /// pinning it.
+        ///
+        /// Reach for this when logging is adopted before the CLI is. Without
+        /// it, the level arrives only through config or a parsed `CommonArgs`,
+        /// and `CommonArgs` cannot be built by hand to bridge the gap — one
+        /// field is crate-private, so it has to be parsed.
+        #[cfg(feature = "logging")]
+        pub fn with_log_level(mut self, level: &str) -> Self {
+            self.inner.log_level = Some(level.to_string());
+            self
+        }
+
         /// Set how long rotated logs are kept.
         ///
         /// Overrides the application config's `log_retention_days` field.
