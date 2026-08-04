@@ -25,7 +25,10 @@ mod parse;
 mod schema;
 
 pub use artifacts::{ArtifactError, generate_manpages, render_manpage};
-pub use parse::{ParseOutcome, command, parse, parse_with, try_parse_from};
+pub use parse::{
+    ParseOutcome, command, parse, parse_with, parse_with_command, try_parse_from,
+    try_parse_from_with,
+};
 pub use schema::{
     CLI_SPEC_VERSION, CommandExample, CommandMetadata, ErrorMetadata, OutcomeMetadata, OutputField,
     SchemaDocument, SchemaError, SchemaMetadata, Stability, schema_for,
@@ -340,9 +343,16 @@ impl CommonArgs {
     }
 }
 
-/// Build a clap `Command` with the compact `-h`/`--help` flag (HelpShort).
+/// Build a clap `Command` where both `-h` and `--help` print the compact help.
 ///
-/// Usage: call this on the result of `YourCli::command()` before parsing:
+/// Clap splits the two: `-h` renders the summary, `--help` renders every doc
+/// comment in full. The long form gets unreadable fast on a command with any
+/// depth, so [`parse`] applies this by default. Opt back into Clap's split
+/// with [`parse_with_command`] and an identity closure.
+///
+/// This turns off Clap's own help flag as part of the swap. It has to: leaving
+/// it on means two arguments named `help`, which Clap reports by panicking at
+/// startup rather than failing to compile.
 ///
 /// ```no_run
 /// use clap::{CommandFactory, FromArgMatches, Parser};
@@ -361,7 +371,7 @@ impl CommonArgs {
 /// # }
 /// ```
 pub fn with_help_short(cmd: clap::Command) -> clap::Command {
-    cmd.arg(
+    cmd.disable_help_flag(true).arg(
         clap::Arg::new("help")
             .short('h')
             .long("help")

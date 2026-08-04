@@ -833,6 +833,52 @@ fn manpage_generation_writes_collision_free_full_command_paths() {
     assert!(generated.iter().all(|path| path.is_file()));
 }
 
+/// Clap's built-in `help` subcommand is not a command worth documenting.
+///
+/// The walk filters hidden subcommands, and the auto-generated `help` is not
+/// hidden — so it produced a page per command explaining how `help` explains
+/// that command. A CLI with ten subcommands got twenty extra pages, and a
+/// release workflow that copies the man directory wholesale shipped them.
+#[test]
+fn manpage_generation_skips_the_built_in_help_subcommand() {
+    let directory = tempfile::tempdir().unwrap();
+    let generated = librebar::cli::generate_manpages::<SchemaCli>(directory.path()).unwrap();
+    let names: Vec<_> = generated
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+
+    let help_pages: Vec<_> = names.iter().filter(|name| name.contains("-help")).collect();
+    assert!(help_pages.is_empty(), "{help_pages:?}");
+}
+
+/// Skipping the built-in must not skip a subcommand the application named
+/// `help` itself, which is a real command with real behavior to document.
+#[test]
+fn manpage_generation_keeps_an_application_defined_help_subcommand() {
+    #[derive(clap::Parser)]
+    #[command(name = "help-app", disable_help_subcommand = true)]
+    struct HelpCli {
+        #[command(subcommand)]
+        command: HelpCommand,
+    }
+
+    #[derive(clap::Subcommand)]
+    enum HelpCommand {
+        /// The application's own help, not Clap's.
+        Help,
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let generated = librebar::cli::generate_manpages::<HelpCli>(directory.path()).unwrap();
+    let names: Vec<_> = generated
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+
+    assert!(names.contains(&"help-app-help.1".to_owned()), "{names:?}");
+}
+
 // ─── -c/--config ────────────────────────────────────────────────────
 
 /// `-c/--config` is global, so it works before or after a subcommand.
@@ -893,4 +939,126 @@ fn config_path_converts_to_utf8() {
 
     let bare = Cli::try_parse_from(["myapp"]).unwrap();
     assert!(bare.common.config_path().unwrap().is_none());
+}
+
+// ─── command customization through the parse path ───────────────────
+
+/// A CLI that turns off Clap's help flag so it can install its own.
+#[derive(clap::Parser, Debug)]
+#[command(name = "compact-app", version = "1.0.0", disable_help_flag = true)]
+struct CompactHelpCli {
+    #[command(subcommand)]
+    command: CompactCommands,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum CompactCommands {
+    /// Do the thing.
+    ///
+    /// A much longer description that only the long help renders.
+    Run,
+}
+
+/// `with_help_short` has to be reachable from the path that owns startup.
+///
+/// The function is public and documented, but `parse` builds `T::command()`
+/// plus the librebar subcommands and stops, so nothing could apply it. The
+/// README's recipe routes around `parse` with a hand-rolled `get_matches`,
+/// which silently gives up `schema` and `completions`. A customization hook
+/// lets the two compose instead of forcing a choice.
+#[test]
+fn parse_applies_a_command_customization() {
+    let error = librebar::cli::try_parse_from_with::<CompactHelpCli, _, _>(
+        ["compact-app", "--help"],
+        librebar::cli::SchemaMetadata::new(),
+        librebar::cli::with_help_short,
+    )
+    .expect_err("--help terminates parsing");
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+}
+
+/// Customizing the command must not cost the librebar-owned subcommands.
+#[test]
+fn a_customized_command_keeps_the_librebar_subcommands() {
+    let outcome = librebar::cli::try_parse_from_with::<CompactHelpCli, _, _>(
+        ["compact-app", "schema"],
+        librebar::cli::SchemaMetadata::new(),
+        librebar::cli::with_help_short,
+    )
+    .expect("schema should still be handled");
+
+    assert!(matches!(outcome, librebar::cli::ParseOutcome::Schema(_)));
+}
+
+/// The uncustomized path keeps behaving exactly as before.
+#[test]
+fn parse_without_customization_is_unchanged() {
+    let outcome = librebar::cli::try_parse_from::<SchemaCli, _, _>(
+        ["schema-app", "status"],
+        librebar::cli::SchemaMetadata::new(),
+    )
+    .expect("normal command should parse");
+
+    assert!(matches!(outcome, librebar::cli::ParseOutcome::Run(_)));
+}
+
+/// `with_help_short` must be safe on a command that never opted in.
+///
+/// Adding a `help` argument beside Clap's auto-generated one is a duplicate
+/// argument name, which Clap reports by panicking. The function therefore
+/// required every caller to also set `disable_help_flag` — a precondition the
+/// documentation never stated, so the documented usage panicked. Owning that
+/// setting makes the function total.
+#[test]
+fn with_help_short_disables_the_clap_help_flag_itself() {
+    use clap::CommandFactory;
+
+    let mut command = librebar::cli::with_help_short(SchemaCli::command());
+    let rendered = command.render_long_help().to_string();
+
+    assert!(rendered.contains("--help"), "{rendered}");
+}
+
+/// The parse path is compact by default: `--help` matches `-h`.
+#[test]
+fn parse_makes_long_help_compact() {
+    use clap::CommandFactory;
+
+    let long_error = librebar::cli::try_parse_from::<SchemaCli, _, _>(
+        ["schema-app", "--help"],
+        librebar::cli::SchemaMetadata::new(),
+    )
+    .expect_err("--help terminates parsing");
+
+    let mut bare = SchemaCli::command();
+    let clap_long = bare.render_long_help().to_string();
+
+    assert_eq!(long_error.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert!(
+        long_error.to_string().len() < clap_long.len(),
+        "--help should be shorter than Clap's long help"
+    );
+}
+
+/// Clap's long help stays one call away for anyone who wants it.
+#[test]
+fn a_customization_can_opt_back_into_clap_long_help() {
+    let error = librebar::cli::try_parse_from_with::<SchemaCli, _, _>(
+        ["schema-app", "--help"],
+        librebar::cli::SchemaMetadata::new(),
+        |command| command,
+    )
+    .expect_err("--help terminates parsing");
+
+    let compact = librebar::cli::try_parse_from::<SchemaCli, _, _>(
+        ["schema-app", "--help"],
+        librebar::cli::SchemaMetadata::new(),
+    )
+    .expect_err("--help terminates parsing");
+
+    assert!(
+        error.to_string().len() > compact.to_string().len(),
+        "opting out should restore the longer help"
+    );
 }

@@ -67,7 +67,45 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString> + Clone,
 {
-    let mut root = command::<T>()?;
+    try_parse_from_with(args, metadata, super::with_help_short)
+}
+
+/// Parse arguments without exiting, adjusting the built command first.
+///
+/// `customize` receives the application's command with librebar's terminal
+/// subcommands already attached, so a global argument it adds covers those too.
+/// [`with_help_short`](super::with_help_short) is the intended shape:
+///
+/// ```no_run
+/// # #[derive(librebar::cli::clap::Parser)]
+/// # #[command(name = "app", disable_help_flag = true)]
+/// # struct Cli {}
+/// let outcome = librebar::cli::try_parse_from_with::<Cli, _, _>(
+///     std::env::args_os(),
+///     librebar::cli::SchemaMetadata::new(),
+///     librebar::cli::with_help_short,
+/// );
+/// # let _ = outcome;
+/// ```
+///
+/// A command that installs its own help flag must set `disable_help_flag` in
+/// its derive; Clap panics on the duplicate argument name otherwise.
+///
+/// # Errors
+///
+/// Returns Clap parse errors, command-name collisions, invalid schema filters,
+/// or invalid application schema metadata as a Clap error.
+pub fn try_parse_from_with<T, I, S>(
+    args: I,
+    metadata: SchemaMetadata,
+    customize: impl FnOnce(Command) -> Command,
+) -> Result<ParseOutcome<T>, clap::Error>
+where
+    T: Parser,
+    I: IntoIterator<Item = S>,
+    S: Into<OsString> + Clone,
+{
+    let mut root = customize(command::<T>()?);
     let mut matches = root.try_get_matches_from_mut(args)?;
 
     if let Some(schema_matches) = matches.subcommand_matches(SCHEMA_COMMAND) {
@@ -110,6 +148,10 @@ where
 ///
 /// Like [`clap::Parser::parse`], this function exits for help, version, parse
 /// errors, and terminal commands. Normal application arguments are returned.
+///
+/// `-h` and `--help` both print the compact help. Clap's split — where
+/// `--help` expands every doc comment — is available through
+/// [`parse_with_command`] with an identity closure.
 pub fn parse<T: Parser>() -> T {
     parse_with(SchemaMetadata::new())
 }
@@ -117,8 +159,33 @@ pub fn parse<T: Parser>() -> T {
 /// Parse process arguments with explicit application schema metadata.
 ///
 /// Like [`parse`], this exits after printing a schema or parse error.
+///
+/// Delegates to [`try_parse_from`] rather than choosing a customization of its
+/// own, so the exiting and non-exiting paths cannot disagree about what the
+/// default is.
 pub fn parse_with<T: Parser>(metadata: SchemaMetadata) -> T {
-    match try_parse_from::<T, _, _>(std::env::args_os(), metadata) {
+    finish(try_parse_from::<T, _, _>(std::env::args_os(), metadata))
+}
+
+/// Parse process arguments, adjusting the built command first.
+///
+/// The exiting counterpart to [`try_parse_from_with`]. Pass an identity
+/// closure to opt out of the compact help [`parse`] applies and get Clap's
+/// `-h`/`--help` split back.
+pub fn parse_with_command<T: Parser>(
+    metadata: SchemaMetadata,
+    customize: impl FnOnce(Command) -> Command,
+) -> T {
+    finish(try_parse_from_with::<T, _, _>(
+        std::env::args_os(),
+        metadata,
+        customize,
+    ))
+}
+
+/// Resolve a parse outcome into the application's arguments, or exit.
+fn finish<T>(outcome: Result<ParseOutcome<T>, clap::Error>) -> T {
+    match outcome {
         Ok(ParseOutcome::Run(cli)) => cli,
         Ok(ParseOutcome::Schema(document)) => write_schema_and_exit(&document),
         Ok(ParseOutcome::Completions(bytes)) => write_bytes_and_exit(&bytes, "shell completions"),

@@ -68,6 +68,17 @@ pub fn generate_manpages<T: CommandFactory>(
     Ok(generated)
 }
 
+/// Is this subcommand the `help` Clap generated, rather than one of ours?
+///
+/// Clap builds a `help` subcommand into every command that has subcommands,
+/// and does not mark it hidden, so a plain visibility filter documents it —
+/// once per command, recursively, yielding pages like `app-help-help.1`. The
+/// generated one exists only while `disable_help_subcommand` is unset, so that
+/// flag distinguishes it from an application's own command of the same name.
+fn is_generated_help(parent: &Command, subcommand: &Command) -> bool {
+    subcommand.get_name() == "help" && !parent.is_disable_help_subcommand_set()
+}
+
 fn generate_command_manpages(
     command: Command,
     path: &[String],
@@ -78,6 +89,7 @@ fn generate_command_manpages(
     let subcommands: Vec<_> = command
         .get_subcommands()
         .filter(|subcommand| !subcommand.is_hide_set())
+        .filter(|subcommand| !is_generated_help(&command, subcommand))
         .cloned()
         .collect();
     let display_name = path.join("-");

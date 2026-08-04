@@ -345,20 +345,28 @@ to `.with_version()` so crash dumps and OTEL resource attributes agree.
 `apply_color()` and `apply_chdir()` remain available for apps that need a
 different order or want to handle `--version-only` themselves.
 
-For compact help (`-h` shows short help, `--help` shows long help):
+### Help output
+
+`librebar::cli::parse` makes `-h` and `--help` both print the compact help.
+Clap's default splits them, expanding every doc comment into `--help`, which
+grows unreadable on any command with subcommands.
+
+Nothing is required to get this — no derive attributes, no feature flags. To
+opt back into Clap's split, pass an identity closure:
 
 ```rust,no_run
-use librebar::cli::clap::{CommandFactory, FromArgMatches};
 # #[derive(librebar::cli::clap::Parser)]
+# #[command(name = "app")]
 # struct Cli {}
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-
-let cmd = librebar::cli::with_help_short(Cli::command());
-let cli = Cli::from_arg_matches(&cmd.get_matches())?;
-# let _ = cli;
-# Ok(())
-# }
+let cli: Cli = librebar::cli::parse_with_command(
+    librebar::cli::SchemaMetadata::new(),
+    |command| command,
+);
 ```
+
+That closure is a general hook on the built command, which already carries the
+`schema` and `completions` subcommands, so a global argument it adds covers
+those too.
 
 ## Config
 
