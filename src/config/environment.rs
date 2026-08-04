@@ -44,16 +44,43 @@ pub enum UnknownEnvironment {
     Collect,
 }
 
+/// An environment value inserted without a type to coerce against.
+///
+/// The lower layers are the only schema librebar has, so a path sitting at
+/// `null` — an `Option<T>` that no file set — says nothing about what `T` is.
+/// Those values go in as strings and are revisited by [`retype`], which asks
+/// the target type directly.
+#[derive(Debug)]
+pub(super) struct Untyped {
+    path: Vec<String>,
+    variable: String,
+    raw: String,
+}
+
+/// The result of reading the environment into a mergeable overlay.
+#[derive(Debug)]
+pub(super) struct Overlay {
+    /// The values, ready to merge.
+    pub values: Value,
+    /// Variables that contributed, in the order they were read.
+    pub applied: Vec<String>,
+    /// Where each merged value came from.
+    pub origins: OriginMap,
+    /// Values that went in untyped. See [`Untyped`].
+    pub untyped: Vec<Untyped>,
+}
+
 pub(super) fn overlay(
     app_name: &str,
     schema: &Value,
     source: &dyn EnvironmentSource,
     unknown: UnknownEnvironment,
-) -> Result<(Value, Vec<String>, OriginMap)> {
+) -> Result<Overlay> {
     let prefix = prefix(app_name);
     let mut overlay = Map::new();
     let mut applied = Vec::new();
     let mut origins = OriginMap::new();
+    let mut untyped = Vec::new();
 
     let mut variables: Vec<(String, OsString)> = source
         .vars(&prefix)
@@ -74,6 +101,13 @@ pub(super) fn overlay(
         let value = value
             .into_string()
             .map_err(|_| environment_error(&key, "value is not valid UTF-8"))?;
+        if matches!(value_schema, Some(Value::Null) | None) {
+            untyped.push(Untyped {
+                path: path.clone(),
+                variable: key.clone(),
+                raw: value.clone(),
+            });
+        }
         let value = coerce(&key, value, value_schema)?;
 
         let config_path = path.join(".");
@@ -89,7 +123,117 @@ pub(super) fn overlay(
         applied.push(key);
     }
 
-    Ok((Value::Object(overlay), applied, origins))
+    Ok(Overlay {
+        values: Value::Object(overlay),
+        applied,
+        origins,
+        untyped,
+    })
+}
+
+/// Sample values used to ask the target type what it will accept.
+///
+/// `0` stands in for every numeric width: serde accepts an integer wherever a
+/// float is expected, so one probe covers `f64` and `u16` alike.
+const PROBES: [(fn() -> Value, Shape); 4] = [
+    (|| Value::from(0), Shape::Number),
+    (|| Value::Bool(true), Shape::Bool),
+    (|| Value::Array(Vec::new()), Shape::Array),
+    (|| Value::Object(Map::new()), Shape::Object),
+];
+
+/// What a probe established about a path's target type.
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    Number,
+    Bool,
+    Array,
+    Object,
+}
+
+/// Recover types for values that went in untyped, by asking the config type.
+///
+/// `accepts` deserializes a candidate document into the consumer's config and
+/// reports whether it succeeded. Writing a sample of each shape into `baseline`
+/// and testing it establishes what the field holds without a schema crate and
+/// without parsing values loosely — the latter would resolve `"00123"` bound
+/// for an `Option<String>` into `123`.
+///
+/// A path is only revisited when the string form is *rejected*, so this can
+/// change nothing that works today: every value it touches is one the loader
+/// would otherwise have refused.
+pub(super) fn retype(
+    overlay: &mut Value,
+    untyped: &[Untyped],
+    baseline: &Value,
+    accepts: &dyn Fn(&Value) -> bool,
+) -> Result<()> {
+    for entry in untyped {
+        let Some(shape) = probe(baseline, entry, accepts) else {
+            continue;
+        };
+        let value = reparse(&entry.variable, &entry.raw, shape)?;
+        replace(overlay, &entry.path, value);
+    }
+    Ok(())
+}
+
+fn probe(baseline: &Value, entry: &Untyped, accepts: &dyn Fn(&Value) -> bool) -> Option<Shape> {
+    let string = Value::String(entry.raw.clone());
+    if accepts(&candidate(baseline, &entry.path, string)) {
+        return None;
+    }
+    PROBES
+        .iter()
+        .find(|(sample, _)| accepts(&candidate(baseline, &entry.path, sample())))
+        .map(|(_, shape)| *shape)
+}
+
+fn candidate(baseline: &Value, path: &[String], value: Value) -> Value {
+    let mut candidate = baseline.clone();
+    replace(&mut candidate, path, value);
+    candidate
+}
+
+/// Overwrite `path` in `target`, walking only through objects that exist.
+///
+/// Every path reaching this point was found in the schema, so the parents are
+/// present; a missing one means the document changed underneath and the write
+/// is simply dropped.
+fn replace(target: &mut Value, path: &[String], value: Value) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    let mut current = target;
+    for segment in parents {
+        let Some(next) = current.as_object_mut().and_then(|map| map.get_mut(segment)) else {
+            return;
+        };
+        current = next;
+    }
+    if let Some(map) = current.as_object_mut() {
+        map.insert(last.clone(), value);
+    }
+}
+
+fn reparse(variable: &str, raw: &str, shape: Shape) -> Result<Value> {
+    match shape {
+        // Widest first: an integer deserializes into a float, but not the
+        // reverse, so `8000` must not become `8000.0` on its way to a `u16`.
+        Shape::Number => raw
+            .parse::<i64>()
+            .map(Value::from)
+            .or_else(|_| raw.parse::<u64>().map(Value::from))
+            .or_else(|_| raw.parse::<f64>().map(Value::from))
+            .map_err(|_| environment_error(variable, "expected a number")),
+        Shape::Bool => match raw {
+            "true" => Ok(Value::Bool(true)),
+            "false" => Ok(Value::Bool(false)),
+            _ => Err(environment_error(variable, "expected `true` or `false`")),
+        },
+        Shape::Array => parse_compound(variable, raw, "array", Value::is_array),
+        Shape::Object => parse_compound(variable, raw, "object", Value::is_object),
+    }
 }
 
 fn path(variable: &str, prefix: &str) -> Result<Vec<String>> {

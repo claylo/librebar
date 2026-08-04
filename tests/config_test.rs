@@ -197,6 +197,9 @@ struct EnvironmentConfig {
     level: librebar::config::LogLevel,
     build_id: Option<String>,
     optional_port: Option<u16>,
+    optional_ratio: Option<f64>,
+    optional_flag: Option<bool>,
+    optional_tags: Option<Vec<String>>,
 }
 
 impl Default for EnvironmentConfig {
@@ -212,6 +215,9 @@ impl Default for EnvironmentConfig {
             level: librebar::config::LogLevel::Info,
             build_id: None,
             optional_port: None,
+            optional_ratio: None,
+            optional_flag: None,
+            optional_tags: None,
         }
     }
 }
@@ -360,6 +366,82 @@ fn null_schema_values_remain_strings() {
     let (config, _): (EnvironmentConfig, _) =
         loader_with(&[("MY_APP_BUILD_ID", "00123")]).load().unwrap();
     assert_eq!(config.build_id.as_deref(), Some("00123"));
+}
+
+/// An `Option<T>` field that defaults to `None` still gets its type honored.
+///
+/// `C::default()` is librebar's only schema, so an unset optional serializes to
+/// `null` and carries no type with it. Without recovering that type from `C`
+/// itself, every numeric optional is unsettable from the environment — the
+/// value arrives as a string and deserialization rejects it.
+#[test]
+fn optional_numbers_accept_environment_values_without_a_file() {
+    let (config, _): (EnvironmentConfig, _) = loader_with(&[
+        ("MY_APP_OPTIONAL_PORT", "8000"),
+        ("MY_APP_OPTIONAL_RATIO", "0.25"),
+    ])
+    .load()
+    .unwrap();
+
+    assert_eq!(config.optional_port, Some(8000));
+    assert_eq!(config.optional_ratio, Some(0.25));
+}
+
+#[test]
+fn optional_booleans_accept_environment_values_without_a_file() {
+    let (config, _): (EnvironmentConfig, _) = loader_with(&[("MY_APP_OPTIONAL_FLAG", "true")])
+        .load()
+        .unwrap();
+
+    assert_eq!(config.optional_flag, Some(true));
+}
+
+#[test]
+fn optional_sequences_accept_environment_values_without_a_file() {
+    let (config, _): (EnvironmentConfig, _) =
+        loader_with(&[("MY_APP_OPTIONAL_TAGS", r#"["worker","blue"]"#)])
+            .load()
+            .unwrap();
+
+    assert_eq!(
+        config.optional_tags.as_deref(),
+        Some(["worker".to_string(), "blue".to_string()].as_slice())
+    );
+}
+
+/// Recovering the type per field, not per document.
+///
+/// A numeric-looking string bound for an `Option<String>` and a real number
+/// bound for an `Option<u16>` arrive through the same layer. Parsing values
+/// loosely — figment's approach — would resolve the number and corrupt the
+/// string, so the two have to be typed independently.
+#[test]
+fn a_numeric_looking_string_survives_alongside_a_real_optional_number() {
+    let (config, _): (EnvironmentConfig, _) = loader_with(&[
+        ("MY_APP_BUILD_ID", "00123"),
+        ("MY_APP_OPTIONAL_PORT", "8000"),
+    ])
+    .load()
+    .unwrap();
+
+    assert_eq!(config.build_id.as_deref(), Some("00123"));
+    assert_eq!(config.optional_port, Some(8000));
+}
+
+/// Once the type is known, a bad value is reported against that type.
+///
+/// The pre-fix error said only "invalid configuration at optional_port" —
+/// accurate, but it left the reader to work out that a string had been handed
+/// to a number. Recovering the type is what makes the reason sayable, and it
+/// puts an optional field's diagnostics on par with a required one's.
+#[test]
+fn an_unparseable_optional_number_reports_the_expected_type() {
+    let err = loader_with(&[("MY_APP_OPTIONAL_PORT", "not-a-number")])
+        .load::<EnvironmentConfig>()
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("MY_APP_OPTIONAL_PORT"), "{message}");
+    assert!(message.contains("number"), "{message}");
 }
 
 #[test]
